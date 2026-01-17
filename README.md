@@ -1,4 +1,5 @@
-[    0.000000] Linux version 6.18.5-cachyos-void-lto (void0x14@system) (gcc version 15.1.0, LTO) #1 SMP PREEMPT_DYNAMIC Sat Jan 17 15:42:00 TRT 2026
+```text
+[    0.000000] Linux version 6.18.5-cachyos-void-lto (void0x14@system) (gcc version 15.1.0) #1 SMP PREEMPT_DYNAMIC Sat Jan 17 15:42:00 TRT 2026
 [    0.000000] Command line: BOOT_IMAGE=/boot/vmlinuz-linux-cachyos root=UUID=VOID-PARTITION rw quiet loglevel=3 systemd.show_status=auto
 [    0.234001] x86/cpu: Vendor "AuthenticAMD" Family 23 Model 113 Stepping 0
 [    0.234005] x86/cpu: Model name: AMD Ryzen 5 3600 6-Core Processor
