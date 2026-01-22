@@ -17,7 +17,10 @@
     - [x] Smooth Z-axis translation (Accelerate/Decelerate).
     - [x] Radial rotation (Mouse drag + Keyboard).
     - [x] Input mapping (WASD, Mouse).
-- [ ] Phase 3: Data & Panels (Placement logic).
+- [x] Phase 3: Data & Panels (Placement logic).
+    - [x] Generate random mock JSON (Images, Videos, Text).
+    - [x] Procedural placement of cards on ring inner walls.
+    - [x] Implement synaptic link visuals (line primitives).
 - [ ] Phase 4: Interaction (Raycasting, 360 views).
 - [ ] Phase 5: Polish & UI.
 

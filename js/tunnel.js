@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { CONFIG } from './utils/constants.js';
+import { Panel } from './components/Panel.js';
+import { generateMockData } from './data/mockData.js';
 
 class Ring {
     constructor(index, zPosition) {
@@ -31,11 +33,15 @@ class Ring {
         this.hull = new THREE.Mesh(geometry, material);
         this.mesh.add(this.hull);
 
-        // Grid Line Visuals (Wireframe overlay to emphasize segments)
+        // Grid Line Visuals
         const wireframeGeo = new THREE.EdgesGeometry(geometry);
         const wireframeMat = new THREE.LineBasicMaterial({ color: CONFIG.COLORS.GRID_LINES, opacity: 0.6, transparent: true });
         this.wireframe = new THREE.LineSegments(wireframeGeo, wireframeMat);
         this.mesh.add(this.wireframe);
+
+        // Panels Container
+        this.panelsGroup = new THREE.Group();
+        this.mesh.add(this.panelsGroup);
 
         // Set initial position
         this.mesh.position.z = zPosition;
@@ -43,6 +49,40 @@ class Ring {
 
     setPosition(z) {
         this.mesh.position.z = z;
+    }
+
+    // Method to populate ring with data panels
+    loadContent(segmentData) {
+        // Clear existing panels
+        while (this.panelsGroup.children.length > 0) {
+            this.panelsGroup.remove(this.panelsGroup.children[0]);
+        }
+
+        if (!segmentData || !segmentData.items) return;
+
+        const panelPositions = [];
+
+        // Create new panels
+        segmentData.items.forEach(item => {
+            const panel = new Panel(item, CONFIG.TUNNEL.RADIUS);
+            this.panelsGroup.add(panel.mesh);
+            panelPositions.push(panel.mesh.position.clone());
+        });
+
+        // Create Synaptic Lines (Connecting panels in the same ring)
+        if (panelPositions.length > 1) {
+            const lineGeo = new THREE.BufferGeometry().setFromPoints(panelPositions);
+            // Use LineLoop to close the shape
+            const lineLoop = new THREE.LineLoop(
+                lineGeo,
+                new THREE.LineBasicMaterial({
+                    color: CONFIG.COLORS.GRID_LINES,
+                    opacity: 0.4,
+                    transparent: true
+                })
+            );
+            this.panelsGroup.add(lineLoop);
+        }
     }
 }
 
@@ -52,61 +92,64 @@ export class Tunnel {
         this.rings = [];
         this.chunkSize = CONFIG.TUNNEL.SEGMENT_LENGTH;
         this.visibleSegments = CONFIG.TUNNEL.SEGMENTS_COUNT;
+
+        // Data Source
+        // We generate a "infinite" stream usually, but for now let's just create a large set
+        // or generate on the fly. Let's pre-generate a batch.
+        this.mockData = generateMockData(100); // 100 segments worth of data
+        this.dataOffset = 0; // Tracks which data index correlates to rings[0]
     }
 
     init() {
-        // Determine start position (slightly behind camera to avoid clipping pop-in)
         // We generate along negative Z
         for (let i = 0; i < this.visibleSegments; i++) {
             // Position: 0, -50, -100...
             const z = -i * this.chunkSize;
             const ring = new Ring(i, z);
+
+            // Load initial data
+            if (this.mockData[i]) {
+                ring.loadContent(this.mockData[i]);
+            }
+
             this.rings.push(ring);
             this.scene.add(ring.mesh);
         }
         console.log(`Tunnel initialized with ${this.rings.length} rings.`);
+
+        // Initial sorting to ensure rings array matches visual Z order
+        // this.rings[0] = z=0 (Index 0 data), this.rings[11] = z=-550 (Index 11 data)
     }
 
     update(cameraZ) {
         // Pooling Logic: Re-position rings as camera moves
-        // We assume movement is primarily towards negative Z
-
-        // Find the ring that is furthest behind the camera
-        // "Behind" in negative Z movement means Z > cameraZ
-        // But we want to recycle rings that are excessively behind (positive offset)
-
-        // Simple logic:
-        // Sorted or unsorted? We can just check boundaries.
-        // If a ring is at z = 0, and camera is at -100.
-        // Distance = 100.
-        // If distance > Threshold, move ring to the front (deep negative Z).
-
-        // However, keeping strict order is better for seamless content.
-        // Let's assume rings are strictly ordered in the array by Z index descending (0, -50, -100).
-
-        // Actually, simple "infinite scrolling" logic:
-        // First ring in array is at highest Z (closest to 0 or positive).
-        // If (firstRing.z > cameraZ + buffer), move it to (lastRing.z - chunkSize).
-
         // Buffer: One segment length behind camera.
         const recycleThreshold = cameraZ + this.chunkSize;
 
-        // We might need to handle multiple rings if moving fast (looping).
-        // But usually one per frame is enough or we sort.
-
-        // Sort rings by Z descending (Logic: 0, -50, -100...)
+        // Sort rings by Z descending (0, -50, -100...)
+        // This ensures rings[0] is always the rearmost one we might want to pop
         this.rings.sort((a, b) => b.mesh.position.z - a.mesh.position.z);
 
-        const rearmostRing = this.rings[0]; // Z is largest (e.g. 0)
-        const foremostRing = this.rings[this.rings.length - 1]; // Z is smallest (e.g. -500)
+        const rearmostRing = this.rings[0];
+        const foremostRing = this.rings[this.rings.length - 1];
 
         if (rearmostRing.mesh.position.z > recycleThreshold) {
             // Move to front
             const newZ = foremostRing.mesh.position.z - this.chunkSize;
             rearmostRing.setPosition(newZ);
 
-            // We don't need to re-sort the array if we just assume efficiency, 
-            // but strictly debugging, sorting next frame handles it.
+            // Determine the data index for this new position
+            // The initial set was 0..11.
+            // If we just moved ring 0 to position -600 (index 12 spot effectively),
+            // We need to fetch data index based on position.
+            // Position z = -index * chunkSize
+            // index = -z / chunkSize
+            const newDataIndex = Math.abs(Math.round(newZ / this.chunkSize));
+
+            // Safety check for data bounds (In real app, we'd gen more on fly)
+            const content = this.mockData[newDataIndex % this.mockData.length]; // Loop data if runs out
+
+            rearmostRing.loadContent(content);
         }
     }
 }

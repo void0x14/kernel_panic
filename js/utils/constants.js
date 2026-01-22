@@ -22,7 +22,7 @@ export const CONFIG = {
     // Visuals
     COLORS: {
         ATMOSPHERE: 0x050a14, // Matches CSS
-        GRID_LINES: 0x3b82f6,
+        GRID_LINES: 0x60a5fa, // Lighter blue for better visibility
         WALL_BASE: 0x111827,
     },
 

@@ -1,10 +1,10 @@
 # Active Context
 
 ## Current Work Focus
-- Implementing **Phase 3: Data & Panels**.
-- Generating random mock content (Images, Video, Text).
-- Placing panels procedurally on ring inner walls using polar coordinates.
-- Drawing synaptic lines between related panels.
+- Implementing **Phase 4: Interaction & 360 View**.
+- Adding Raycasting for mouse interactions (Hover/Click).
+- Creating the "Focus Mode" camera transition.
+- Building the 360-degree content viewer overlay.
 
 ## Recent Changes
 - Set up Vite + Three.js project structure.
