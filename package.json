@@ -1,0 +1,27 @@
+{
+  "name": "kernel_panic",
+  "version": "1.0.0",
+  "description": "Infinite Segmented Tunnel Visualization",
+  "type": "module",
+  "main": "main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/void0x14/kernel_panic.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/void0x14/kernel_panic/issues"
+  },
+  "homepage": "https://github.com/void0x14/kernel_panic#readme",
+  "dependencies": {
+    "three": "^0.160.0",
+    "vite": "^5.0.0"
+  }
+}
