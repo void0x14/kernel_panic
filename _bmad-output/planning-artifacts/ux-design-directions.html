@@ -1,0 +1,1344 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kernel Panic | Step-09 Scene Kiosk</title>
+  <style>
+    :root {
+      --bg: #050709;
+      --bg-2: #0d1115;
+      --panel: rgba(8, 11, 14, 0.58);
+      --panel-2: rgba(14, 18, 22, 0.82);
+      --line: rgba(255, 255, 255, 0.08);
+      --line-strong: rgba(255, 255, 255, 0.16);
+      --text: #edf2f5;
+      --muted: #95a0aa;
+      --ghost: #92deef;
+      --ghost-weak: rgba(146, 222, 239, 0.16);
+      --drift: #c96844;
+      --drift-hot: #ff9b6b;
+      --danger: #ff7f72;
+      --amber: #e4b47d;
+      --stability: #6f8578;
+      --shadow: 0 36px 120px rgba(0, 0, 0, 0.46);
+      --radius-lg: 30px;
+      --radius-md: 18px;
+      --radius-sm: 14px;
+      --display: "Sora", "IBM Plex Sans", "Segoe UI", sans-serif;
+      --body: "IBM Plex Sans", "Segoe UI", sans-serif;
+      --mono: "IBM Plex Mono", "SFMono-Regular", monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      min-height: 100%;
+      background:
+        radial-gradient(circle at 14% 12%, rgba(146, 222, 239, 0.1), transparent 22%),
+        radial-gradient(circle at 84% 18%, rgba(201, 104, 68, 0.12), transparent 22%),
+        linear-gradient(180deg, #040608 0%, #0a0d11 34%, #10151a 100%);
+      color: var(--text);
+      font-family: var(--body);
+      overflow: hidden;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(255, 255, 255, 0.016) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.016) 1px, transparent 1px);
+      background-size: 96px 96px;
+      mask-image: linear-gradient(180deg, rgba(255,255,255,0.26), transparent 88%);
+      opacity: 0.24;
+      pointer-events: none;
+    }
+
+    body::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background:
+        radial-gradient(circle at 20% 20%, rgba(255,255,255,0.04), transparent 12%),
+        radial-gradient(circle at 80% 30%, rgba(255,255,255,0.03), transparent 12%),
+        radial-gradient(circle at 56% 72%, rgba(255,255,255,0.02), transparent 10%);
+      mix-blend-mode: screen;
+      pointer-events: none;
+      opacity: 0.5;
+    }
+
+    button {
+      font: inherit;
+      color: inherit;
+      background: none;
+      border: 0;
+      padding: 0;
+      cursor: pointer;
+    }
+
+    .app {
+      position: relative;
+      min-height: 100vh;
+      padding: 26px;
+      z-index: 1;
+    }
+
+    .chrome {
+      position: absolute;
+      inset: 26px 26px auto;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 18px;
+      align-items: start;
+      z-index: 12;
+      pointer-events: none;
+    }
+
+    .brand-block,
+    .study-switch,
+    .info-card,
+    .control-dock {
+      pointer-events: auto;
+    }
+
+    .brand-block {
+      max-width: 660px;
+      padding: 16px 18px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: var(--panel);
+      backdrop-filter: blur(14px);
+      box-shadow: var(--shadow);
+    }
+
+    .brand-block .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+      padding: 7px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(146, 222, 239, 0.22);
+      background: rgba(146, 222, 239, 0.08);
+      color: #d7f4f9;
+      font-size: 0.74rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .brand-block h1 {
+      margin: 0 0 8px;
+      font-family: var(--display);
+      font-size: clamp(2rem, 4vw, 3.6rem);
+      line-height: 0.94;
+      letter-spacing: -0.06em;
+      max-width: 11ch;
+    }
+
+    .brand-block p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.62;
+      max-width: 68ch;
+      font-size: 0.96rem;
+    }
+
+    .study-switch {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: end;
+    }
+
+    .switch-button {
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(8, 11, 14, 0.6);
+      backdrop-filter: blur(14px);
+      color: var(--muted);
+      font-size: 0.82rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      transition: border-color 180ms ease, background 180ms ease, color 180ms ease, transform 180ms ease;
+    }
+
+    .switch-button:hover {
+      transform: translateY(-1px);
+      border-color: rgba(146, 222, 239, 0.28);
+      color: var(--text);
+    }
+
+    .switch-button.active {
+      border-color: rgba(146, 222, 239, 0.34);
+      background: rgba(146, 222, 239, 0.12);
+      color: #d9f5f9;
+    }
+
+    .experience {
+      position: relative;
+      height: calc(100vh - 52px);
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.04);
+      border-radius: 34px;
+      background:
+        radial-gradient(circle at 18% 18%, rgba(146, 222, 239, 0.1), transparent 22%),
+        radial-gradient(circle at 82% 18%, rgba(201, 104, 68, 0.12), transparent 18%),
+        linear-gradient(180deg, #0a0d10 0%, #07090b 100%);
+      box-shadow: var(--shadow);
+      isolation: isolate;
+    }
+
+    .experience::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.018) 1px, transparent 1px);
+      background-size: 140px 140px;
+      mask-image: linear-gradient(180deg, rgba(255,255,255,0.24), transparent 88%);
+      opacity: 0.16;
+      pointer-events: none;
+    }
+
+    .experience::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at 50% 50%, rgba(255,255,255,0.04), transparent 28%),
+        radial-gradient(circle at 16% 80%, rgba(255,255,255,0.03), transparent 18%);
+      opacity: 0.22;
+      pointer-events: none;
+    }
+
+    .ambient {
+      position: absolute;
+      inset: -4%;
+      background:
+        radial-gradient(circle at 18% 18%, rgba(146, 222, 239, 0.12), transparent 22%),
+        radial-gradient(circle at 78% 14%, rgba(201, 104, 68, 0.16), transparent 18%),
+        radial-gradient(circle at 52% 70%, rgba(228, 180, 125, 0.08), transparent 16%);
+      filter: blur(28px);
+      opacity: 0.72;
+      transition: transform 500ms ease, opacity 500ms ease, filter 500ms ease;
+      pointer-events: none;
+    }
+
+    .stage {
+      position: absolute;
+      inset: 0;
+      transition: transform 560ms ease, filter 560ms ease;
+    }
+
+    .stage::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at center, transparent 40%, rgba(0,0,0,0.46) 100%);
+      pointer-events: none;
+    }
+
+    .architecture,
+    .scene-study,
+    .scene-actors,
+    .scene-signals,
+    .scene-forensics,
+    .orbit-layer,
+    .first-person-layer {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    .portal {
+      position: absolute;
+      inset: 14% 20% 18%;
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 36px;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0)),
+        radial-gradient(circle at 50% 26%, rgba(255,255,255,0.03), transparent 24%);
+      box-shadow:
+        inset 0 -100px 120px rgba(0,0,0,0.26),
+        0 0 0 1px rgba(255,255,255,0.02);
+      transition: transform 520ms ease, box-shadow 520ms ease, opacity 520ms ease;
+    }
+
+    .portal-left,
+    .portal-right {
+      position: absolute;
+      top: 16%;
+      bottom: 18%;
+      width: 27%;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.01)),
+        linear-gradient(90deg, rgba(255,255,255,0.04), rgba(0,0,0,0.14));
+      opacity: 0.4;
+      transition: transform 520ms ease, opacity 520ms ease;
+    }
+
+    .portal-left {
+      left: 13%;
+      clip-path: polygon(0 0, 100% 18%, 70% 100%, 0 100%);
+    }
+
+    .portal-right {
+      right: 13%;
+      clip-path: polygon(0 18%, 100% 0, 100% 100%, 30% 100%);
+    }
+
+    .backlight {
+      position: absolute;
+      left: 39%;
+      right: 39%;
+      top: 18%;
+      bottom: 34%;
+      border-radius: 24px 24px 10px 10px;
+      background:
+        radial-gradient(circle at 50% 50%, rgba(228, 180, 125, 0.22), transparent 54%),
+        linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.01));
+      box-shadow:
+        0 0 90px rgba(228,180,125,0.12),
+        inset 0 0 30px rgba(255,255,255,0.04);
+      opacity: 0.76;
+      transition: opacity 520ms ease, box-shadow 520ms ease;
+    }
+
+    .floor-plane {
+      position: absolute;
+      left: 10%;
+      right: 10%;
+      bottom: 8%;
+      height: 42%;
+      border-top: 1px solid rgba(255,255,255,0.08);
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.03), transparent),
+        repeating-linear-gradient(90deg, rgba(255,255,255,0.02) 0 1px, transparent 1px 82px);
+      transform: perspective(980px) rotateX(76deg);
+      transform-origin: center top;
+      opacity: 0.54;
+    }
+
+    .light-shaft {
+      position: absolute;
+      top: 8%;
+      bottom: 22%;
+      width: 16%;
+      background: linear-gradient(180deg, rgba(255,255,255,0.18), transparent 72%);
+      filter: blur(12px);
+      opacity: 0.12;
+    }
+
+    .light-shaft.left {
+      left: 28%;
+      transform: skewX(-12deg);
+    }
+
+    .light-shaft.right {
+      right: 24%;
+      transform: skewX(10deg);
+    }
+
+    .residue-surface {
+      position: absolute;
+      top: 16%;
+      bottom: 20%;
+      width: 10%;
+      border-radius: 26px;
+      border: 1px solid rgba(255,255,255,0.06);
+      background:
+        linear-gradient(180deg, rgba(146,222,239,0.08), rgba(255,255,255,0.01)),
+        linear-gradient(90deg, rgba(255,255,255,0.04), transparent);
+      opacity: 0;
+      filter: blur(0.2px);
+      transition: opacity 420ms ease, transform 520ms ease;
+    }
+
+    .residue-surface.left {
+      left: 8%;
+      transform: perspective(1000px) rotateY(28deg) translateX(-12px);
+    }
+
+    .residue-surface.right {
+      right: 8%;
+      transform: perspective(1000px) rotateY(-28deg) translateX(12px);
+    }
+
+    .presence-shadow {
+      position: absolute;
+      left: 34%;
+      right: 34%;
+      bottom: 16%;
+      height: 10%;
+      border-radius: 999px;
+      background: radial-gradient(circle at center, rgba(0,0,0,0.42), transparent 72%);
+      opacity: 0.42;
+    }
+
+    .figure {
+      position: absolute;
+      bottom: 22%;
+      width: 72px;
+      height: 190px;
+      border-radius: 40px 40px 20px 20px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.18), rgba(255,255,255,0.04));
+      box-shadow: 0 18px 34px rgba(0,0,0,0.22);
+      transition: transform 560ms ease, opacity 520ms ease, filter 520ms ease, background 520ms ease, box-shadow 520ms ease;
+    }
+
+    .figure::before {
+      content: "";
+      position: absolute;
+      top: -34px;
+      left: 18px;
+      width: 36px;
+      height: 36px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.14);
+      transition: background 520ms ease, box-shadow 520ms ease;
+    }
+
+    .figure.left {
+      left: 19%;
+      transform: scale(1.04);
+    }
+
+    .figure.self {
+      left: 47%;
+      width: 82px;
+      height: 208px;
+      background: linear-gradient(180deg, rgba(146, 222, 239, 0.28), rgba(146, 222, 239, 0.04));
+      box-shadow:
+        0 0 18px rgba(146,222,239,0.14),
+        0 18px 40px rgba(0,0,0,0.26);
+      opacity: 0.12;
+      transform: translateY(10px);
+    }
+
+    .figure.self::before {
+      background: rgba(146, 222, 239, 0.24);
+    }
+
+    .figure.right {
+      left: 74%;
+      width: 66px;
+      height: 180px;
+      transform: scale(0.92);
+    }
+
+    .figure.recognition {
+      background: linear-gradient(180deg, rgba(255, 127, 114, 0.24), rgba(255,255,255,0.05));
+    }
+
+    .figure.recognition::before {
+      background: rgba(255,127,114,0.24);
+      box-shadow: 0 0 18px rgba(255,127,114,0.16);
+    }
+
+    .table {
+      position: absolute;
+      left: 22%;
+      right: 22%;
+      bottom: 24%;
+      height: 12%;
+      border-radius: 999px;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.14), rgba(255,255,255,0.02)),
+        linear-gradient(90deg, rgba(228,180,125,0.18), rgba(255,255,255,0.04), rgba(201,104,68,0.18));
+      box-shadow: 0 18px 40px rgba(0,0,0,0.24);
+      opacity: 0;
+      transform: translateY(18px);
+      transition: opacity 420ms ease, transform 520ms ease;
+    }
+
+    .thread,
+    .fracture,
+    .trace,
+    .pulse {
+      position: absolute;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 420ms ease, transform 520ms ease, filter 520ms ease, box-shadow 520ms ease;
+    }
+
+    .thread {
+      height: 2px;
+      background: linear-gradient(90deg, transparent, rgba(146, 222, 239, 0.85), transparent);
+      box-shadow: 0 0 16px rgba(146, 222, 239, 0.26);
+    }
+
+    .fracture {
+      width: 2px;
+      background: linear-gradient(180deg, transparent, rgba(255, 155, 107, 0.9), transparent);
+      box-shadow: 0 0 18px rgba(255, 155, 107, 0.24);
+    }
+
+    .trace {
+      width: 18px;
+      height: 18px;
+      border-radius: 999px;
+      border: 1px solid rgba(146, 222, 239, 0.28);
+      background: rgba(146, 222, 239, 0.08);
+    }
+
+    .pulse {
+      border-radius: 999px;
+      border: 1px solid rgba(255, 155, 107, 0.3);
+      box-shadow: 0 0 22px rgba(255,155,107,0.08);
+    }
+
+    .thread.a { left: 24%; top: 38%; width: 30%; transform: rotate(8deg); }
+    .thread.b { left: 50%; top: 50%; width: 22%; transform: rotate(-14deg); }
+    .thread.c { left: 38%; top: 32%; width: 24%; transform: rotate(34deg); }
+    .fracture.a { left: 62%; top: 16%; height: 52%; transform: rotate(16deg); }
+    .fracture.b { left: 36%; top: 26%; height: 34%; transform: rotate(-18deg); }
+    .trace.a { left: 31%; top: 40%; }
+    .trace.b { left: 60%; top: 48%; }
+    .trace.c { left: 70%; top: 28%; }
+    .pulse.a { left: 44%; top: 38%; width: 180px; height: 180px; }
+    .pulse.b { left: 34%; top: 28%; width: 260px; height: 260px; }
+
+    .forensic-card {
+      position: absolute;
+      max-width: 220px;
+      padding: 14px 15px;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 18px;
+      background: rgba(9, 12, 15, 0.64);
+      backdrop-filter: blur(14px);
+      box-shadow: 0 24px 40px rgba(0,0,0,0.24);
+      opacity: 0;
+      transform: translateY(18px);
+      transition: opacity 420ms ease, transform 520ms ease;
+    }
+
+    .forensic-card strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 0.78rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .forensic-card p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.5;
+      font-size: 0.86rem;
+    }
+
+    .forensic-card.one { left: 9%; top: 16%; }
+    .forensic-card.two { right: 8%; top: 18%; }
+    .forensic-card.three { left: 44%; bottom: 18%; }
+
+    .camera-shoulder,
+    .camera-hand,
+    .gaze-veil {
+      position: absolute;
+      opacity: 0;
+      transition: opacity 420ms ease, transform 520ms ease, filter 520ms ease;
+    }
+
+    .camera-shoulder {
+      bottom: -4%;
+      width: 34%;
+      height: 36%;
+      border-radius: 46% 46% 0 0;
+      background:
+        radial-gradient(circle at 50% 18%, rgba(255,255,255,0.06), transparent 22%),
+        linear-gradient(180deg, rgba(15,18,22,0.96), rgba(7,9,12,0.96));
+      filter: blur(1px);
+    }
+
+    .camera-shoulder.left {
+      left: -6%;
+      transform: translateY(24px) rotate(-8deg);
+    }
+
+    .camera-shoulder.right {
+      right: -8%;
+      width: 30%;
+      transform: translateY(24px) rotate(10deg);
+    }
+
+    .camera-hand {
+      right: 24%;
+      bottom: 7%;
+      width: 12%;
+      height: 16%;
+      border-radius: 46% 40% 32% 38%;
+      background:
+        linear-gradient(180deg, rgba(25,30,36,0.96), rgba(9,11,14,0.96)),
+        radial-gradient(circle at 30% 30%, rgba(255,255,255,0.05), transparent 22%);
+      transform: translateY(18px) rotate(-16deg);
+      filter: blur(0.4px);
+    }
+
+    .gaze-veil {
+      inset: 0;
+      background:
+        radial-gradient(circle at 50% 54%, transparent 0 24%, rgba(0,0,0,0.14) 42%, rgba(0,0,0,0.46) 100%);
+    }
+
+    .orbit-layer {
+      opacity: 0;
+      transition: opacity 420ms ease, transform 520ms ease;
+    }
+
+    .orbit-grid {
+      position: absolute;
+      inset: 12% 16% 18%;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .orbit-grid::before,
+    .orbit-grid::after {
+      content: "";
+      position: absolute;
+      inset: 14%;
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 999px;
+    }
+
+    .orbit-grid::after {
+      inset: 30%;
+    }
+
+    .orbit-node {
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.18);
+      box-shadow: 0 0 14px rgba(255,255,255,0.06);
+    }
+
+    .orbit-node.a { left: 18%; top: 28%; }
+    .orbit-node.b { right: 22%; top: 22%; }
+    .orbit-node.c { left: 30%; bottom: 24%; }
+    .orbit-node.d { right: 18%; bottom: 28%; background: rgba(255,155,107,0.46); }
+
+    .scene-caption {
+      position: absolute;
+      left: 30px;
+      bottom: 28px;
+      max-width: min(560px, calc(100% - 480px));
+      padding: 16px 18px;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 20px;
+      background: rgba(8, 11, 14, 0.5);
+      backdrop-filter: blur(14px);
+      box-shadow: var(--shadow);
+      z-index: 6;
+      transition: opacity 300ms ease, transform 360ms ease;
+    }
+
+    .scene-caption strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 0.78rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #d8f3f8;
+    }
+
+    .scene-caption p {
+      margin: 0;
+      color: var(--text);
+      line-height: 1.58;
+      font-size: 0.96rem;
+    }
+
+    .info-card {
+      position: absolute;
+      top: 150px;
+      right: 26px;
+      width: min(360px, calc(100vw - 52px));
+      padding: 16px 18px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: var(--panel);
+      backdrop-filter: blur(14px);
+      box-shadow: var(--shadow);
+      z-index: 12;
+    }
+
+    .info-card .mini {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+      padding: 7px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.04);
+      color: var(--muted);
+      font-size: 0.74rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .info-card h2 {
+      margin: 0 0 10px;
+      font-family: var(--display);
+      font-size: 1.35rem;
+      letter-spacing: -0.04em;
+    }
+
+    .info-card p {
+      margin: 0 0 12px;
+      color: var(--muted);
+      line-height: 1.58;
+      font-size: 0.92rem;
+    }
+
+    .info-card .rule {
+      display: grid;
+      gap: 8px;
+    }
+
+    .info-card .rule span {
+      color: var(--text);
+      font-size: 0.88rem;
+      line-height: 1.48;
+    }
+
+    .control-dock {
+      position: absolute;
+      left: 50%;
+      bottom: 22px;
+      transform: translateX(-50%) translateY(16px);
+      width: min(880px, calc(100vw - 52px));
+      padding: 12px;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 22px;
+      background: rgba(6, 9, 12, 0.46);
+      backdrop-filter: blur(14px);
+      box-shadow: var(--shadow);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 12;
+      opacity: 0.18;
+      transition: opacity 260ms ease, transform 320ms ease, border-color 260ms ease;
+    }
+
+    .app:hover .control-dock,
+    .app:focus-within .control-dock,
+    .experience[data-state="latent"] ~ .control-dock,
+    .experience[data-state="detected"] ~ .control-dock,
+    .experience[data-state="rupture"] ~ .control-dock {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    .control-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .control-label {
+      padding: 0 6px 0 2px;
+      color: var(--muted);
+      font-size: 0.78rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .pill {
+      padding: 10px 12px;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 999px;
+      background: rgba(255,255,255,0.05);
+      color: var(--muted);
+      font-size: 0.8rem;
+      letter-spacing: 0.04em;
+      transition: border-color 180ms ease, background 180ms ease, color 180ms ease, transform 180ms ease;
+    }
+
+    .pill:hover {
+      transform: translateY(-1px);
+      border-color: rgba(146, 222, 239, 0.28);
+      color: var(--text);
+    }
+
+    .pill.active {
+      border-color: rgba(146, 222, 239, 0.32);
+      background: rgba(146, 222, 239, 0.12);
+      color: #d8f4f9;
+    }
+
+    .pill[data-value="detected"].active,
+    .pill[data-value="rupture"].active {
+      border-color: rgba(255, 155, 107, 0.34);
+      background: rgba(201, 104, 68, 0.14);
+      color: #ffd7c2;
+    }
+
+    .legend-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      color: var(--muted);
+      font-size: 0.82rem;
+      line-height: 1.5;
+    }
+
+    .legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      flex: 0 0 auto;
+    }
+
+    .experience[data-state="latent"] .residue-surface,
+    .experience[data-state="detected"] .residue-surface,
+    .experience[data-state="rupture"] .residue-surface,
+    .experience[data-state="latent"] .thread,
+    .experience[data-state="detected"] .thread,
+    .experience[data-state="rupture"] .thread,
+    .experience[data-state="detected"] .trace,
+    .experience[data-state="rupture"] .trace,
+    .experience[data-state="detected"] .forensic-card.ghost,
+    .experience[data-state="rupture"] .forensic-card,
+    .experience[data-state="latent"] .forensic-card.peripheral {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .experience[data-state="detected"] .pulse,
+    .experience[data-state="rupture"] .pulse {
+      opacity: 0.48;
+      transform: scale(1.06);
+    }
+
+    .experience[data-state="detected"] .figure.left,
+    .experience[data-state="detected"] .figure.right {
+      transform: translateY(-8px) rotate(5deg);
+    }
+
+    .experience[data-state="detected"] .backlight {
+      box-shadow:
+        0 0 120px rgba(228,180,125,0.16),
+        inset 0 0 30px rgba(255,255,255,0.05);
+    }
+
+    .experience[data-state="rupture"] .portal {
+      transform: skewX(-1.5deg) scale(1.02);
+      box-shadow:
+        inset 0 -100px 120px rgba(0,0,0,0.3),
+        0 0 0 1px rgba(255,255,255,0.03),
+        0 0 90px rgba(201,104,68,0.08);
+    }
+
+    .experience[data-state="rupture"] .portal-left {
+      transform: skewY(-2deg) translateX(-8px);
+    }
+
+    .experience[data-state="rupture"] .portal-right {
+      transform: skewY(2deg) translateX(8px);
+    }
+
+    .experience[data-state="rupture"] .fracture {
+      opacity: 1;
+    }
+
+    .experience[data-state="rupture"] .ambient {
+      transform: scale(1.08) translate(10px, 12px);
+      filter: blur(34px);
+      opacity: 0.88;
+    }
+
+    .experience[data-pov="first"] .camera-shoulder,
+    .experience[data-pov="first"] .camera-hand,
+    .experience[data-pov="first"] .gaze-veil {
+      opacity: 1;
+    }
+
+    .experience[data-pov="first"] .camera-shoulder.left {
+      transform: translateY(0) rotate(-8deg);
+    }
+
+    .experience[data-pov="first"] .camera-shoulder.right {
+      transform: translateY(0) rotate(10deg);
+    }
+
+    .experience[data-pov="first"] .camera-hand {
+      transform: translateY(0) rotate(-16deg);
+    }
+
+    .experience[data-pov="first"] .figure.self {
+      opacity: 0;
+      transform: translateY(34px) scale(0.76);
+    }
+
+    .experience[data-pov="third"] .stage {
+      transform: perspective(1400px) rotateX(2deg) scale(0.93) translateY(-8px);
+      filter: saturate(0.96);
+    }
+
+    .experience[data-pov="third"] .figure.self {
+      opacity: 1;
+      transform: translateY(0) scale(1.16);
+      box-shadow:
+        0 0 22px rgba(146,222,239,0.14),
+        0 22px 48px rgba(0,0,0,0.28);
+    }
+
+    .experience[data-pov="third"] .figure.left {
+      left: 24%;
+      transform: scale(0.96) translateY(2px);
+    }
+
+    .experience[data-pov="third"] .figure.right {
+      left: 68%;
+      transform: scale(0.9) translateY(6px);
+    }
+
+    .experience[data-pov="third"] .camera-shoulder,
+    .experience[data-pov="third"] .camera-hand,
+    .experience[data-pov="third"] .gaze-veil {
+      opacity: 0;
+    }
+
+    .experience[data-pov="orbit"] .stage {
+      transform: scale(0.72) translateY(-56px);
+      filter: saturate(0.82) contrast(1.04);
+    }
+
+    .experience[data-pov="orbit"] .figure {
+      opacity: 0.72;
+      transform: scale(0.72) translateY(-24px);
+    }
+
+    .experience[data-pov="orbit"] .orbit-layer {
+      opacity: 1;
+    }
+
+    .experience[data-pov="orbit"] .camera-shoulder,
+    .experience[data-pov="orbit"] .camera-hand,
+    .experience[data-pov="orbit"] .gaze-veil {
+      opacity: 0;
+    }
+
+    .experience[data-study="entry"] .table,
+    .experience[data-study="entry"] .pulse {
+      opacity: 0;
+    }
+
+    .experience[data-study="entry"] .thread.a,
+    .experience[data-study="entry"] .trace.a,
+    .experience[data-study="entry"] .forensic-card.two,
+    .experience[data-study="entry"] .forensic-card.three {
+      opacity: 0;
+    }
+
+    .experience[data-study="recognition"] .table {
+      opacity: 0.82;
+      transform: translateY(0);
+    }
+
+    .experience[data-study="recognition"] .figure.left {
+      left: 30%;
+    }
+
+    .experience[data-study="recognition"] .figure.self {
+      left: 46%;
+    }
+
+    .experience[data-study="recognition"] .figure.right {
+      left: 61%;
+    }
+
+    .experience[data-study="recognition"] .pulse.a,
+    .experience[data-study="recognition"] .pulse.b {
+      opacity: 0.18;
+    }
+
+    .experience[data-study="recognition"] .forensic-card.one {
+      left: 8%;
+      bottom: 18%;
+      top: auto;
+    }
+
+    .experience[data-study="recognition"] .forensic-card.two {
+      right: 8%;
+      top: 14%;
+    }
+
+    .experience[data-study="recognition"] .forensic-card.three {
+      opacity: 0;
+    }
+
+    .experience[data-study="forensics"] .table {
+      opacity: 0;
+    }
+
+    .experience[data-study="forensics"] .thread.a,
+    .experience[data-study="forensics"] .thread.b,
+    .experience[data-study="forensics"] .thread.c,
+    .experience[data-study="forensics"] .trace.a,
+    .experience[data-study="forensics"] .trace.b,
+    .experience[data-study="forensics"] .trace.c {
+      opacity: 0.16;
+    }
+
+    .experience[data-study="forensics"] .forensic-card.one,
+    .experience[data-study="forensics"] .forensic-card.two,
+    .experience[data-study="forensics"] .forensic-card.three {
+      opacity: 0.18;
+    }
+
+    .experience[data-study="forensics"] .residue-surface {
+      opacity: 0.26;
+    }
+
+    @media (max-width: 1100px) {
+      .chrome {
+        grid-template-columns: 1fr;
+      }
+
+      .study-switch {
+        justify-content: start;
+      }
+
+      .info-card {
+        top: auto;
+        bottom: 110px;
+        right: 16px;
+      }
+
+      .scene-caption {
+        max-width: min(420px, calc(100% - 52px));
+      }
+    }
+
+    @media (max-width: 760px) {
+      .app {
+        padding: 14px;
+      }
+
+      .chrome {
+        inset: 14px 14px auto;
+      }
+
+      .experience {
+        height: calc(100vh - 28px);
+      }
+
+      .brand-block h1 {
+        max-width: none;
+        font-size: clamp(1.8rem, 8vw, 2.8rem);
+      }
+
+      .scene-caption {
+        left: 14px;
+        right: 14px;
+        max-width: none;
+        bottom: 98px;
+      }
+
+      .info-card {
+        left: 14px;
+        right: 14px;
+        width: auto;
+        bottom: 196px;
+      }
+
+      .control-dock {
+        left: 14px;
+        right: 14px;
+        width: auto;
+        transform: translateY(16px);
+      }
+
+      .app:hover .control-dock,
+      .app:focus-within .control-dock,
+      .experience[data-state="latent"] ~ .control-dock,
+      .experience[data-state="detected"] ~ .control-dock,
+      .experience[data-state="rupture"] ~ .control-dock {
+        transform: translateY(0);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="chrome">
+      <div class="brand-block">
+        <div class="eyebrow">Step-09 / Scene Study Kiosk</div>
+        <h1>Enter memory. Get noticed. Read what you missed.</h1>
+        <p>Bu dosya artık uzun bir mockup page değil. Tek tıkla açılan, ürünün ana vaadini doğrudan hissettiren bir scene-study kiosk. Amaç kart göstermek değil; embodied entry, recognition rupture ve forensic reveal’in ürün dili olup olamayacağını test etmek.</p>
+      </div>
+
+      <div class="study-switch">
+        <button class="switch-button active" data-study="entry">Embodied Entry</button>
+        <button class="switch-button" data-study="recognition">Recognition Event</button>
+        <button class="switch-button" data-study="forensics">Forensic Reveal</button>
+      </div>
+    </div>
+
+    <div class="experience" data-study="entry" data-state="dormant" data-pov="first">
+      <div class="ambient"></div>
+
+      <div class="stage">
+        <div class="architecture">
+          <div class="portal"></div>
+          <div class="portal-left"></div>
+          <div class="portal-right"></div>
+          <div class="backlight"></div>
+          <div class="floor-plane"></div>
+          <div class="light-shaft left"></div>
+          <div class="light-shaft right"></div>
+          <div class="residue-surface left"></div>
+          <div class="residue-surface right"></div>
+          <div class="presence-shadow"></div>
+        </div>
+
+        <div class="scene-actors">
+          <div class="figure left"></div>
+          <div class="figure self"></div>
+          <div class="figure right"></div>
+          <div class="table"></div>
+        </div>
+
+        <div class="scene-signals">
+          <div class="thread a"></div>
+          <div class="thread b"></div>
+          <div class="thread c"></div>
+          <div class="fracture a"></div>
+          <div class="fracture b"></div>
+          <div class="trace a"></div>
+          <div class="trace b"></div>
+          <div class="trace c"></div>
+          <div class="pulse a"></div>
+          <div class="pulse b"></div>
+        </div>
+
+        <div class="scene-forensics">
+          <div class="forensic-card one ghost">
+            <strong>Hidden Pressure</strong>
+            <p>İlk bakışta fark edilmeyen bağlam, sahnenin kendi kenarlarında görünmeye başlıyor.</p>
+          </div>
+          <div class="forensic-card two ghost">
+            <strong>Recognition Drift</strong>
+            <p>Seni bir bağ yanlış okumaya başladığında bozulma önce ritimde başlıyor.</p>
+          </div>
+          <div class="forensic-card three peripheral">
+            <strong>Delayed Read</strong>
+            <p>Forensic katman bilgi kutusu değil; sonradan fark ettiğin ilişki izi gibi çalışıyor.</p>
+          </div>
+        </div>
+
+        <div class="first-person-layer">
+          <div class="camera-shoulder left"></div>
+          <div class="camera-shoulder right"></div>
+          <div class="camera-hand"></div>
+          <div class="gaze-veil"></div>
+        </div>
+
+        <div class="orbit-layer">
+          <div class="orbit-grid"></div>
+          <div class="orbit-node a"></div>
+          <div class="orbit-node b"></div>
+          <div class="orbit-node c"></div>
+          <div class="orbit-node d"></div>
+        </div>
+      </div>
+
+      <div class="scene-caption">
+        <strong id="caption-label">Embodied Entry</strong>
+        <p id="caption-text">Bu study’nin amacı, kullanıcıya daha ilk saniyede “ben bir ekran izlemiyorum, bu sahnenin içindeyim” hissi vermek.</p>
+      </div>
+    </div>
+
+    <aside class="info-card">
+      <div class="mini">Current Study</div>
+      <h2 id="info-title">Embodied Entry</h2>
+      <p id="info-body">Varsayılan omurga. Sahne tek ve baskın. Kullanıcı anının dışındaki göz değil, içindeki varlık gibi konumlanır.</p>
+      <div class="rule" id="info-rules">
+        <span>Default goal: presence before explanation.</span>
+        <span>Failure mode: page-like layout or dashboard chrome.</span>
+        <span>Signal to watch: does the scene feel inhabited before it feels annotated?</span>
+      </div>
+      <div class="legend-row" style="margin-top:12px;">
+        <span class="legend-dot" style="background:#92deef;"></span>
+        Hidden context scene içinde görünür.
+      </div>
+      <div class="legend-row">
+        <span class="legend-dot" style="background:#c96844;"></span>
+        Drift önce dünyayı bozar.
+      </div>
+      <div class="legend-row">
+        <span class="legend-dot" style="background:#ff7f72;"></span>
+        Recognition ağır kırılmadır.
+      </div>
+    </aside>
+
+    <div class="control-dock">
+      <div class="control-group">
+        <span class="control-label">State</span>
+        <button class="pill active" data-kind="state" data-value="dormant">Dormant</button>
+        <button class="pill" data-kind="state" data-value="latent">Hidden Context</button>
+        <button class="pill" data-kind="state" data-value="detected">Detected</button>
+        <button class="pill" data-kind="state" data-value="rupture">Rupture</button>
+      </div>
+      <div class="control-group">
+        <span class="control-label">POV</span>
+        <button class="pill active" data-kind="pov" data-value="first">First</button>
+        <button class="pill" data-kind="pov" data-value="third">Third</button>
+        <button class="pill" data-kind="pov" data-value="orbit">Orbit</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const experience = document.querySelector(".experience");
+    const studyButtons = document.querySelectorAll(".switch-button");
+    const pills = document.querySelectorAll(".pill");
+
+    const captionLabel = document.getElementById("caption-label");
+    const captionText = document.getElementById("caption-text");
+    const infoTitle = document.getElementById("info-title");
+    const infoBody = document.getElementById("info-body");
+    const infoRules = document.getElementById("info-rules");
+
+    const content = {
+      entry: {
+        title: "Embodied Entry",
+        body: "Varsayılan omurga. Sahne tek ve baskın. Kullanıcı anının dışındaki göz değil, içindeki varlık gibi konumlanır.",
+        rules: [
+          "Default goal: presence before explanation.",
+          "Failure mode: page-like layout or dashboard chrome.",
+          "Signal to watch: does the scene feel inhabited before it feels annotated?"
+        ],
+        captions: {
+          dormant: "Bu study’nin amacı, kullanıcıya daha ilk saniyede “ben bir ekran izlemiyorum, bu sahnenin içindeyim” hissi vermek.",
+          latent: "Hidden-context burada kart gibi gelmez; sahnenin kenarlarında, boşluklarında ve residue yüzeylerinde sızmaya başlar.",
+          detected: "Bir bağ seni fark etmeye başladığında sahnenin ritmi bozulur. Tepki HUD değil, world-state mutation olarak hissedilir.",
+          rupture: "Rupture halinde continuity, ışık mantığı ve mimari doğruluk bile güvenilmez olmaya başlar."
+        }
+      },
+      recognition: {
+        title: "Recognition Event",
+        body: "Kritik world-response study’si. Tanınma tek bir uyarı değil; zincirleme sahne deformasyonu olarak ele alınır.",
+        rules: [
+          "Default goal: recognition must feel consequential.",
+          "Failure mode: orange ring + number = fake drama.",
+          "Signal to watch: does posture, silence and spacing mutate?"
+        ],
+        captions: {
+          dormant: "Burada sahne önce normal görünür; asıl amaç recognition kırılmasının ne kadar ağır hissedebileceğini test etmektir.",
+          latent: "Recognition gelmeden önce bile bakış süresi, sessizlik ve masa çevresindeki enerji değişmeye başlar.",
+          detected: "Detected anı küçük bir olay değil; kişilerin yönelimi ve boşluğun kullanımı sahneyi yeniden yazar.",
+          rupture: "Recognition rupture olduğunda artık tek kişi bozulmaz; bütün run yanlış bir gerçeklik okumasına kayar."
+        }
+      },
+      forensics: {
+        title: "Forensic Reveal",
+        body: "Analitik katman. Ama ayrı masa veya post-it duvarı değil; sahnenin kendi içinden büyüyen ikinci okuma yüzeyi.",
+        rules: [
+          "Default goal: discovery should feel earned.",
+          "Failure mode: explanation boxes that speak for the scene.",
+          "Signal to watch: does the user feel they noticed, not that they were told?"
+        ],
+        captions: {
+          dormant: "Bu study, analizi sahneden koparmadan nasıl görünür kılacağımızı test eder.",
+          latent: "İlk izler obje, yankı, ilişki hattı ve dikkat boşluğu olarak belirmeye başlar.",
+          detected: "Forensic katman burada veri paneli değil; ‘o anda neyi kaçırdım?’ sorusunun mekansal cevabıdır.",
+          rupture: "Rupture seviyesinde geçmiş algının ne kadar eksik olduğu sert biçimde açığa çıkar."
+        }
+      }
+    };
+
+    function setStudy(study) {
+      experience.dataset.study = study;
+      studyButtons.forEach((button) => {
+        button.classList.toggle("active", button.dataset.study === study);
+      });
+
+      infoTitle.textContent = content[study].title;
+      infoBody.textContent = content[study].body;
+      infoRules.innerHTML = "";
+      content[study].rules.forEach((rule) => {
+        const span = document.createElement("span");
+        span.textContent = rule;
+        infoRules.appendChild(span);
+      });
+
+      if (study === "recognition") {
+        document.querySelector(".figure.left").classList.add("recognition");
+        document.querySelector(".figure.right").classList.add("recognition");
+      } else {
+        document.querySelector(".figure.left").classList.remove("recognition");
+        document.querySelector(".figure.right").classList.remove("recognition");
+      }
+
+      updateCaption();
+    }
+
+    function setPillGroup(kind, value) {
+      if (kind === "state") {
+        experience.dataset.state = value;
+      }
+      if (kind === "pov") {
+        experience.dataset.pov = value;
+      }
+
+      pills.forEach((pill) => {
+        if (pill.dataset.kind === kind) {
+          pill.classList.toggle("active", pill.dataset.value === value);
+        }
+      });
+
+      updateCaption();
+    }
+
+    function updateCaption() {
+      const study = experience.dataset.study;
+      const state = experience.dataset.state;
+      captionLabel.textContent = content[study].title;
+      captionText.textContent = content[study].captions[state];
+    }
+
+    studyButtons.forEach((button) => {
+      button.addEventListener("click", () => setStudy(button.dataset.study));
+    });
+
+    pills.forEach((pill) => {
+      pill.addEventListener("click", () => setPillGroup(pill.dataset.kind, pill.dataset.value));
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "1") setStudy("entry");
+      if (event.key === "2") setStudy("recognition");
+      if (event.key === "3") setStudy("forensics");
+      if (event.key === "q") setPillGroup("state", "dormant");
+      if (event.key === "w") setPillGroup("state", "latent");
+      if (event.key === "e") setPillGroup("state", "detected");
+      if (event.key === "r") setPillGroup("state", "rupture");
+      if (event.key === "a") setPillGroup("pov", "first");
+      if (event.key === "s") setPillGroup("pov", "third");
+      if (event.key === "d") setPillGroup("pov", "orbit");
+    });
+
+    setStudy("entry");
+    setPillGroup("state", "dormant");
+    setPillGroup("pov", "first");
+  </script>
+</body>
+</html>
