@@ -3,16 +3,172 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Kernel Panic — GFX</title>
+    <title>Kernel Panic — Memory OS</title>
     <style>
-        /* Fullscreen canvas, no scrollbars, no margin */
-        * { margin: 0; padding: 0; }
-        body { overflow: hidden; background: #000; }
-        canvas { display: block; width: 100vw; height: 100vh; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { overflow: hidden; background: #000; font-family: monospace; color: #C8C8C8; }
+        canvas { display: block; width: 100vw; height: 100vh; position: fixed; top: 0; left: 0; z-index: 0; }
+
+        .panel {
+            position: absolute;
+            background: rgba(10, 10, 10, 0.75);
+            border: 1px solid rgba(200, 200, 200, 0.15);
+            padding: 12px;
+            pointer-events: auto;
+            z-index: 10;
+        }
+
+        .panel-label {
+            color: #00C8FF;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 8px;
+        }
+
+        /* Top-left: branch list */
+        #kp-panel-branches {
+            top: 12px;
+            left: 12px;
+            min-width: 160px;
+        }
+
+        /* Top-right: panic scores */
+        #kp-panel-panic {
+            top: 12px;
+            right: 12px;
+            min-width: 180px;
+        }
+
+        .panic-alert {
+            color: #FF1A1A;
+            font-weight: bold;
+            animation: panic-blink 0.5s infinite;
+        }
+        @keyframes panic-blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        /* Bottom-left: text input */
+        #kp-panel-text {
+            bottom: 12px;
+            left: 12px;
+            width: 380px;
+        }
+
+        #kp-memory-text {
+            width: 100%;
+            height: 80px;
+            background: rgba(0, 0, 0, 0.6);
+            border: 1px solid rgba(200, 200, 200, 0.2);
+            color: #C8C8C8;
+            font-family: monospace;
+            font-size: 13px;
+            padding: 8px;
+            resize: none;
+            outline: none;
+        }
+        #kp-memory-text:focus {
+            border-color: #00C8FF;
+        }
+
+        #kp-inject {
+            margin-top: 6px;
+            padding: 6px 18px;
+            background: rgba(0, 200, 255, 0.15);
+            border: 1px solid #00C8FF;
+            color: #00C8FF;
+            font-family: monospace;
+            font-size: 12px;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        #kp-inject:hover {
+            background: rgba(0, 200, 255, 0.3);
+        }
+
+        .inject-hint {
+            font-size: 10px;
+            color: #666;
+            margin-top: 4px;
+        }
+
+        /* Bottom-right: file inputs */
+        #kp-panel-files {
+            bottom: 12px;
+            right: 12px;
+            width: 240px;
+        }
+
+        .file-input-group {
+            margin-bottom: 8px;
+        }
+
+        .file-btn {
+            display: inline-block;
+            padding: 6px 12px;
+            background: rgba(0, 200, 255, 0.1);
+            border: 1px solid rgba(200, 200, 200, 0.2);
+            color: #C8C8C8;
+            font-family: monospace;
+            font-size: 11px;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .file-btn:hover {
+            background: rgba(0, 200, 255, 0.25);
+            border-color: #00C8FF;
+        }
+
+        .file-input-hidden {
+            display: none;
+        }
     </style>
 </head>
 <body>
     <canvas id="c"></canvas>
+
+    <!-- Top-left: Branch list -->
+    <div id="kp-panel-branches" class="panel">
+        <div class="panel-label">BRANCHES</div>
+        <div id="kp-branch-list">
+            <div style="color:#FFFFFF">b0</div>
+        </div>
+    </div>
+
+    <!-- Top-right: Panic scores -->
+    <div id="kp-panel-panic" class="panel">
+        <div class="panel-label">PANIC SCORES</div>
+        <div id="kp-panic-scores">
+            <div>b0: 0.0000</div>
+        </div>
+    </div>
+
+    <!-- Bottom-left: Free text input -->
+    <div id="kp-panel-text" class="panel">
+        <div class="panel-label">ENTER MEMORY</div>
+        <textarea id="kp-memory-text" placeholder="Anını yaz... (örn: 2019 yaz Istanbul arkadaşımla tartıştım çok sinirliydim)"></textarea>
+        <button id="kp-inject">INJECT</button>
+        <div class="inject-hint">Ctrl+Enter to inject</div>
+    </div>
+
+    <!-- Bottom-right: File inputs -->
+    <div id="kp-panel-files" class="panel">
+        <div class="panel-label">IMPORT HISTORY</div>
+        <div class="file-input-group">
+            <label class="file-btn" for="kp-chatgpt-file">LOAD CHATGPT EXPORT</label>
+            <input id="kp-chatgpt-file" class="file-input-hidden" type="file" accept=".json">
+        </div>
+        <div class="file-input-group">
+            <label class="file-btn" for="kp-gemini-file">LOAD GEMINI EXPORT</label>
+            <input id="kp-gemini-file" class="file-input-hidden" type="file" accept=".json">
+        </div>
+    </div>
+
     <script src="gfx.js"></script>
+    <script src="parser.js"></script>
 </body>
 </html>

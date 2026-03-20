@@ -199,6 +199,14 @@ async function init() {
     // DataView for reading WASM linear memory (must be recreated on memory.growth)
     let mem = new DataView(wasm.memory.buffer);
 
+    // Expose WASM globally for parser.js
+    window._kpWasm = wasm;
+
+    // Panic display update — called by parser.js after event injection
+    window._kpUpdatePanic = function () {
+        updatePanicDisplay();
+    };
+
     console.log('Phase 3: WASM loaded, sim running');
 
     // ============================================================
@@ -251,6 +259,25 @@ async function init() {
             scores.push(`b${i}:${score.toFixed(3)}`);
         }
         console.log(`branches=${activeBranchCount} panic=[${scores.join(', ')}]`);
+    }
+
+    function updatePanicDisplay() {
+        const panicEl = document.getElementById('kp-panic-scores');
+        const branchEl = document.getElementById('kp-branch-list');
+        if (!panicEl || !branchEl) return;
+
+        let panicHtml = '';
+        let branchHtml = '';
+        for (let i = 0; i < activeBranchCount; i++) {
+            const score = wasm.sim_panic_score(i);
+            const isPanic = score > 1.0;
+            const scoreClass = isPanic ? 'panic-alert' : '';
+            const color = i === 0 ? '#FFFFFF' : i === 1 ? '#00C8FF' : i === 2 ? '#FFC800' : '#FF8000';
+            panicHtml += `<div class="${scoreClass}">b${i}: ${score.toFixed(4)}</div>`;
+            branchHtml += `<div style="color:${color}">b${i} ${isPanic ? '⚠ PANIC' : ''}</div>`;
+        }
+        panicEl.innerHTML = panicHtml;
+        branchEl.innerHTML = branchHtml;
     }
 
     // ============================================================
@@ -322,6 +349,7 @@ async function init() {
         const now = performance.now();
         if (now - lastLogTime > 1000) {
             logStatus();
+            updatePanicDisplay();
             lastLogTime = now;
         }
 
