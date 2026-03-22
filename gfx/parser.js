@@ -14,24 +14,36 @@
     const MEMORY_EVENT_SIZE = 84;
     const SCRATCH_OFFSET = 8192;
 
+    const NEGATIVE_PHRASES = [
+        'hayal kırıklığı', 'işe yaramaz',
+    ];
+
     // Keyword dictionaries — negative
     const NEGATIVE_KEYWORDS = [
-        'kötü', 'sinir', 'korku', 'öfke', 'nefret', 'ağla', 'panik', 'kaybet',
-        'başarısız', 'yıkıl', 'kötü', 'üzgün', 'acı', 'keder', 'yalnız', 'stres',
-        'bad', 'angry', 'fear', 'hate', 'panic', 'fail', 'sad', 'cry', 'lost',
-        'terrible', 'awful', 'horrible', 'depressed', 'anxious', 'stress', 'pain',
-        'lonely', 'miserable', 'hopeless', 'despair', 'rage', 'fury', 'grief',
-        'tartış', 'kavga', 'kırgın', 'üzül', 'kızgın', 'öfkeli', 'endişe',
+        'kötü', 'sinir', 'sinirlen', 'korku', 'öfke', 'öfkelen', 'öfkeli', 'nefret',
+        'ağla', 'panik', 'kaybet', 'başarısız', 'yıkıl', 'üzgün', 'üzül', 'acı',
+        'keder', 'yas', 'yalnız', 'terk', 'terked', 'kaybol', 'sahipsiz', 'stres',
+        'tartış', 'kavga', 'kırgın', 'kızgın', 'kızar', 'endişe', 'kaygı', 'mutsuz',
+        'boş', 'anlamsız', 'değersiz', 'beceriksiz', 'bitkin', 'tüken', 'çaresiz',
+        'mahvol', 'berbat', 'kabus', 'bad', 'angry', 'fear', 'hate', 'panic',
+        'fail', 'sad', 'cry', 'lost', 'terrible', 'awful', 'horrible', 'depressed',
+        'anxious', 'stress', 'pain', 'lonely', 'miserable', 'hopeless', 'despair',
+        'rage', 'fury', 'grief', 'frustrat', 'overwhelm', 'broken', 'empty',
+        'worthless', 'abandon', 'furious', 'devastat', 'crush', 'shatter', 'upset',
+        'hurt', 'numb', 'isolat', 'guilt',
     ];
 
     // Keyword dictionaries — positive
     const POSITIVE_KEYWORDS = [
-        'iyi', 'mutlu', 'güzel', 'sevgi', 'umut', 'rahat', 'başar',
-        'good', 'happy', 'love', 'hope', 'calm', 'success', 'joy',
-        'peaceful', 'wonderful', 'great', 'fantastic', 'amazing', 'beautiful',
-        'excellent', 'perfect', 'brilliant', 'delightful', 'cheerful',
-        'huzur', 'sevinç', 'neşe', 'barış', 'başarı', 'keyif', 'coşku',
-        'eğlen', 'gülümse', 'sevinç', 'tatlı', 'harika', 'muhteşem',
+        'iyi', 'mutlu', 'güzel', 'sevgi', 'umut', 'rahat', 'başar', 'huzur',
+        'sevinç', 'neşe', 'barış', 'keyif', 'coşku', 'eğlen', 'gülümse', 'tatlı',
+        'harika', 'muhteşem', 'gurur', 'güvenli', 'şefkat', 'minnet', 'destek', 'sakin',
+        'dingin', 'ferah', 'konfor', 'güvende', 'değerli', 'anlamlı', 'umutlu', 'heyecan',
+        'başard', 'başarı', 'güçlü', 'iyileş', 'rahatla', 'sev', 'aidiyet', 'huzurlu',
+        'good', 'happy', 'love', 'hope', 'calm', 'success', 'joy', 'peaceful',
+        'wonderful', 'great', 'fantastic', 'amazing', 'beautiful', 'excellent', 'perfect',
+        'brilliant', 'delightful', 'cheerful', 'grateful', 'relieved', 'comfort', 'secure',
+        'meaningful', 'valued', 'confident', 'proud', 'thrill', 'optim', 'bright',
     ];
 
     // Known city names for location extraction
@@ -62,11 +74,18 @@
         'apartman', 'bina', 'oda', 'salon', 'bahçe', 'teras', 'balkon',
     ];
 
+    function normalizeText(text) {
+        return text.toLowerCase().replace(/[.,!?;:()"']/g, ' ').replace(/\s+/g, ' ').trim();
+    }
+
     function tokenize(text) {
-        return text.toLowerCase().replace(/[.,!?;:()"']/g, ' ').split(/\s+/).filter(w => w.length > 0);
+        const normalized = normalizeText(text);
+        if (normalized.length === 0) return [];
+        return normalized.split(' ');
     }
 
     function scoreEmotion(text) {
+        const normalizedText = normalizeText(text);
         const tokens = tokenize(text);
         if (tokens.length === 0) return { valence: 0.0, intensity: 0.0, sigma: 0.0 };
 
@@ -74,10 +93,19 @@
         let negCount = 0;
         let keywordHits = 0;
 
+        for (const phrase of NEGATIVE_PHRASES) {
+            if (normalizedText.includes(phrase)) {
+                negCount++;
+                keywordHits++;
+            }
+        }
+
         for (const token of tokens) {
             let matched = false;
             for (const kw of NEGATIVE_KEYWORDS) {
-                if (token.includes(kw)) { negCount++; keywordHits++; matched = true; break; }
+                if (token.includes(kw)) {
+                    negCount++; keywordHits++; matched = true; break;
+                }
             }
             if (!matched) {
                 for (const kw of POSITIVE_KEYWORDS) {
@@ -89,9 +117,9 @@
         const valence = (posCount - negCount) / (posCount + negCount + 1);
         const clampedValence = Math.max(-1.0, Math.min(1.0, valence));
         const keywordDensity = keywordHits / tokens.length;
-        const intensity = Math.abs(clampedValence) * keywordDensity;
+        const intensity = keywordHits === 0 ? 0.05 : Math.abs(clampedValence) * keywordDensity;
         const clampedIntensity = Math.max(0.0, Math.min(1.0, intensity));
-        const sigma = Math.min(clampedIntensity * 1.5, 1.5);
+        const sigma = keywordHits === 0 ? 0.075 : Math.min(clampedIntensity * 1.5, 1.5);
 
         return { valence: clampedValence, intensity: clampedIntensity, sigma: sigma };
     }
