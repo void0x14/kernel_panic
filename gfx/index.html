@@ -40,6 +40,33 @@
             min-width: 180px;
         }
 
+        /* Mid-right: scene metadata */
+        #kp-panel-scene {
+            top: 124px;
+            right: 12px;
+            width: 240px;
+        }
+
+        .scene-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 4px;
+            font-size: 11px;
+        }
+
+        .scene-key {
+            color: #777;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .scene-value {
+            color: #C8C8C8;
+            text-align: right;
+            word-break: break-word;
+        }
+
         .panic-alert {
             color: #FF1A1A;
             font-weight: bold;
@@ -147,6 +174,19 @@
         </div>
     </div>
 
+    <div id="kp-panel-scene" class="panel">
+        <div class="panel-label">SCENE DATA</div>
+        <div id="kp-scene-data">
+            <div class="scene-row"><span class="scene-key">source</span><span class="scene-value">-</span></div>
+            <div class="scene-row"><span class="scene-key">location</span><span class="scene-value">-</span></div>
+            <div class="scene-row"><span class="scene-key">time</span><span class="scene-value">-</span></div>
+            <div class="scene-row"><span class="scene-key">weather</span><span class="scene-value">-</span></div>
+            <div class="scene-row"><span class="scene-key">atmosphere</span><span class="scene-value">-</span></div>
+            <div class="scene-row"><span class="scene-key">valence</span><span class="scene-value">-</span></div>
+            <div class="scene-row"><span class="scene-key">intensity</span><span class="scene-value">-</span></div>
+        </div>
+    </div>
+
     <!-- Bottom-left: Free text input -->
     <div id="kp-panel-text" class="panel">
         <div class="panel-label">ENTER MEMORY</div>
@@ -169,6 +209,7 @@
     </div>
 
     <script src="gfx.js"></script>
-    <script src="parser.js"></script>
+    <script src="llm.js?v=20260323"></script>
+    <script src="parser.js?v=20260323"></script>
 </body>
 </html>

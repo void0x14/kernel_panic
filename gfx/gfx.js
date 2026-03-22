@@ -264,6 +264,7 @@ async function init() {
     function updatePanicDisplay() {
         const panicEl = document.getElementById('kp-panic-scores');
         const branchEl = document.getElementById('kp-branch-list');
+        const sceneEl = document.getElementById('kp-scene-data');
         if (!panicEl || !branchEl) return;
 
         let panicHtml = '';
@@ -278,6 +279,23 @@ async function init() {
         }
         panicEl.innerHTML = panicHtml;
         branchEl.innerHTML = branchHtml;
+
+        if (!sceneEl) return;
+
+        const sceneData = window._kpSceneData || {};
+        const sceneRows = [
+            ['source', sceneData.source ? sceneData.source.toUpperCase() : '-'],
+            ['location', sceneData.location || '-'],
+            ['time', sceneData.time_of_day || '-'],
+            ['weather', sceneData.weather || '-'],
+            ['atmosphere', sceneData.atmosphere || '-'],
+            ['valence', Number.isFinite(sceneData.emotion_valence) ? sceneData.emotion_valence.toFixed(3) : '-'],
+            ['intensity', Number.isFinite(sceneData.emotion_intensity) ? sceneData.emotion_intensity.toFixed(3) : '-'],
+        ];
+
+        sceneEl.innerHTML = sceneRows.map(([key, value]) => (
+            `<div class="scene-row"><span class="scene-key">${key}</span><span class="scene-value">${value}</span></div>`
+        )).join('');
     }
 
     // ============================================================

@@ -124,6 +124,68 @@
         return { valence: clampedValence, intensity: clampedIntensity, sigma: sigma };
     }
 
+    function sigmaFromIntensity(intensity) {
+        if (intensity <= 0) return 0.075;
+        return Math.min(intensity * 1.5, 1.5);
+    }
+
+    function clamp(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    function isStringArray(value) {
+        return Array.isArray(value) && value.every((item) => typeof item === 'string');
+    }
+
+    function isUsableString(value) {
+        return typeof value === 'string' && value.trim().length > 0;
+    }
+
+    function hasUsableEmotion(scene) {
+        return typeof scene.emotion_valence === 'number' && typeof scene.emotion_intensity === 'number';
+    }
+
+    function parseLlmSceneData(scene) {
+        if (!scene || typeof scene !== 'object') return null;
+        const hasLocation = isUsableString(scene.location);
+        const hasEmotion = hasUsableEmotion(scene);
+
+        if (!hasLocation && !hasEmotion) return null;
+
+        return {
+            location: hasLocation ? scene.location.trim() : null,
+            time_of_day: isUsableString(scene.time_of_day) ? scene.time_of_day.trim() : 'unknown',
+            weather: isUsableString(scene.weather) ? scene.weather.trim() : 'unknown',
+            atmosphere: isUsableString(scene.atmosphere) ? scene.atmosphere.trim() : 'unknown',
+            emotion_valence: hasEmotion ? clamp(scene.emotion_valence, -1.0, 1.0) : null,
+            emotion_intensity: hasEmotion ? clamp(scene.emotion_intensity, 0.0, 1.0) : null,
+            persons: isStringArray(scene.persons) ? scene.persons : [],
+            hidden_context_candidates: isStringArray(scene.hidden_context_candidates) ? scene.hidden_context_candidates : [],
+        };
+    }
+
+    function buildSceneData(text, rawLlmScene) {
+        const llmScene = parseLlmSceneData(rawLlmScene);
+        const hasLlmEmotion = llmScene && hasUsableEmotion(llmScene);
+        const fallbackEmotion = hasLlmEmotion ? null : scoreEmotion(text);
+        const location = llmScene && llmScene.location ? llmScene.location : extractLocation(text);
+        const emotionValence = hasLlmEmotion ? llmScene.emotion_valence : fallbackEmotion.valence;
+        const emotionIntensity = hasLlmEmotion ? llmScene.emotion_intensity : fallbackEmotion.intensity;
+
+        return {
+            source: llmScene ? 'llm' : 'fallback',
+            location,
+            time_of_day: llmScene ? llmScene.time_of_day : 'unknown',
+            weather: llmScene ? llmScene.weather : 'unknown',
+            atmosphere: llmScene ? llmScene.atmosphere : 'unknown',
+            emotion_valence: emotionValence,
+            emotion_intensity: emotionIntensity,
+            persons: llmScene ? llmScene.persons : [],
+            hidden_context_candidates: llmScene ? llmScene.hidden_context_candidates : [],
+            sigma: llmScene ? sigmaFromIntensity(emotionIntensity) : fallbackEmotion.sigma,
+        };
+    }
+
     function extractLocation(text) {
         const lowerText = text.toLowerCase();
         const words = text.split(/\s+/);
@@ -193,18 +255,50 @@
     // ============================================================
     // CHANNEL 1: Free Text
     // ============================================================
-    function injectText(text) {
+    async function injectText(text) {
         if (!window._kpWasm) { console.error('WASM not ready'); return; }
         const wasm = window._kpWasm;
 
         const timestamp = BigInt(Date.now()) * 1000000n;
-        const location = extractLocation(text);
-        const emotion = scoreEmotion(text);
-        const result = writeMemoryEvent(wasm, null, 0, timestamp, location, emotion.valence, emotion.intensity, emotion.sigma);
+        const rawLlmScene = typeof window.llm_analyze_memory === 'function'
+            ? await window.llm_analyze_memory(text)
+            : null;
+        const sceneData = buildSceneData(text, rawLlmScene);
+
+        if (sceneData.source === 'llm') {
+            console.log('[LLM] SceneData accepted');
+        } else {
+            console.log('[LLM] Fallback to keyword scoring');
+        }
+
+        window._kpSceneData = sceneData;
+
+        const result = writeMemoryEvent(
+            wasm,
+            null,
+            0,
+            timestamp,
+            sceneData.location,
+            sceneData.emotion_valence,
+            sceneData.emotion_intensity,
+            sceneData.sigma,
+        );
         logParsed(result);
 
         // Update UI panic display
         if (window._kpUpdatePanic) window._kpUpdatePanic();
+    }
+
+    async function llmTest(text) {
+        if (typeof window.llm_analyze_memory !== 'function') {
+            console.warn('[LLM] Analyzer not available');
+            return null;
+        }
+
+        const rawLlmScene = await window.llm_analyze_memory(text);
+        const sceneData = buildSceneData(text, rawLlmScene);
+        console.log(JSON.stringify(sceneData, null, 2));
+        return sceneData;
     }
 
     // ============================================================
@@ -353,10 +447,10 @@
         const geminiInput = document.getElementById('kp-gemini-file');
 
         if (injectBtn && textArea) {
-            injectBtn.addEventListener('click', () => {
+            injectBtn.addEventListener('click', async () => {
                 const text = textArea.value.trim();
                 if (text.length === 0) return;
-                injectText(text);
+                await injectText(text);
                 textArea.value = '';
             });
 
@@ -394,6 +488,7 @@
     // Expose globally for gfx.js integration
     window._kpParser = {
         injectText,
+        llmTest,
         parseChatGPT,
         parseGemini,
         scoreEmotion,
