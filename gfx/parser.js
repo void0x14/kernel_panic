@@ -260,15 +260,31 @@
         const wasm = window._kpWasm;
 
         const timestamp = BigInt(Date.now()) * 1000000n;
-        const rawLlmScene = typeof window.llm_analyze_memory === 'function'
-            ? await window.llm_analyze_memory(text)
-            : null;
+
+        // UI feedback: LLM sorgusu başlıyor
+        const sceneEl = document.getElementById('kp-scene-data');
+        const sourceEl = sceneEl ? sceneEl.querySelector('.scene-row:first-child .scene-value') : null;
+        if (sourceEl) sourceEl.textContent = 'QUERYING...';
+
+        let rawLlmScene = null;
+        let llmError = null;
+
+        if (typeof window.llm_analyze_memory === 'function') {
+            try {
+                rawLlmScene = await window.llm_analyze_memory(text);
+            } catch (err) {
+                llmError = err;
+                console.warn('[LLM] Analyze failed:', err.message || err);
+            }
+        }
+
         const sceneData = buildSceneData(text, rawLlmScene);
 
         if (sceneData.source === 'llm') {
             console.log('[LLM] SceneData accepted');
         } else {
-            console.log('[LLM] Fallback to keyword scoring');
+            const reason = llmError ? 'error' : (rawLlmScene === null ? 'unreachable' : 'invalid');
+            console.log(`[LLM] Fallback to keyword scoring (reason: ${reason})`);
         }
 
         window._kpSceneData = sceneData;
@@ -295,10 +311,15 @@
             return null;
         }
 
-        const rawLlmScene = await window.llm_analyze_memory(text);
-        const sceneData = buildSceneData(text, rawLlmScene);
-        console.log(JSON.stringify(sceneData, null, 2));
-        return sceneData;
+        try {
+            const rawLlmScene = await window.llm_analyze_memory(text);
+            const sceneData = buildSceneData(text, rawLlmScene);
+            console.log(JSON.stringify(sceneData, null, 2));
+            return sceneData;
+        } catch (err) {
+            console.error('[LLM] Test failed:', err.message || err);
+            return null;
+        }
     }
 
     // ============================================================

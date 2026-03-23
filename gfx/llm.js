@@ -71,6 +71,32 @@
         }
     }
 
+    let serverHealthy = true;
+    let lastHealthCheck = 0;
+    const HEALTH_CHECK_INTERVAL = 5000; // 5 saniye
+
+    async function checkServerHealth(endpoint) {
+        const now = Date.now();
+        if (now - lastHealthCheck < HEALTH_CHECK_INTERVAL && !serverHealthy) {
+            return false;
+        }
+        lastHealthCheck = now;
+        try {
+            const controller = new AbortController();
+            const timeoutId = window.setTimeout(() => controller.abort(), 3000);
+            const response = await fetch(endpoint, {
+                method: 'OPTIONS',
+                signal: controller.signal,
+            });
+            window.clearTimeout(timeoutId);
+            serverHealthy = response.ok;
+            return serverHealthy;
+        } catch (_e) {
+            serverHealthy = false;
+            return false;
+        }
+    }
+
     async function requestCompletion(endpoint, text) {
         const controller = new AbortController();
         const timeoutId = window.setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
@@ -102,7 +128,8 @@
                 return null;
             }
 
-            throw error;
+            console.warn('[LLM] Unexpected error:', error && error.message ? error.message : error);
+            return null;
         } finally {
             window.clearTimeout(timeoutId);
         }
@@ -114,12 +141,24 @@
         for (let index = 0; index < endpoints.length; index += 1) {
             const endpoint = endpoints[index];
 
+            // Health check: server sağ mı?
+            const healthy = await checkServerHealth(endpoint);
+            if (!healthy) {
+                console.warn(`[LLM] Server unhealthy at ${endpoint}, skipping`);
+                if (index === endpoints.length - 1) {
+                    serverHealthy = true; // Reset for next attempt
+                    return null;
+                }
+                continue;
+            }
+
             try {
                 const scene = await requestCompletion(endpoint, text);
                 if (scene) return scene;
                 if (index === endpoints.length - 1) return null;
             } catch (error) {
-                console.warn(`[LLM] Network request failed for ${endpoint}:`, error);
+                console.warn(`[LLM] Network request failed for ${endpoint}:`, error.message || error);
+                serverHealthy = false;
                 if (index === endpoints.length - 1) return null;
             }
         }
@@ -129,5 +168,5 @@
 
     window.llm_analyze_memory = llm_analyze_memory;
 
-    console.log('[LLM] Module ready, endpoints:', getEndpointCandidates().join(', '));
+    console.log('[LLM] Module ready, endpoints:', getEndpointCandidates().join(', '), '| health check enabled');
 }());
