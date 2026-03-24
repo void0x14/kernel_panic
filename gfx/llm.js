@@ -1,172 +1,134 @@
-(function () {
-    'use strict';
+'use strict';
 
-    const LLM_PORT = 8080;
-    const LLM_PATH = '/completion';
-    const LLM_TIMEOUT_MS = 15000;
+const LLM_CONFIG = {
+    baseUrl: 'http://127.0.0.1:8080/v1',
+    chatEndpoint: '/chat/completions',
+    model: 'gemma-3-4b-it-Q4_K_M.gguf',
+    maxTokens: 1024,
+    temperature: 0.1,
+};
 
-    function getConfiguredEndpoint() {
-        return typeof window.KP_LLM_ENDPOINT === 'string' && window.KP_LLM_ENDPOINT.trim().length > 0
-            ? window.KP_LLM_ENDPOINT.trim()
-            : null;
-    }
+function getEndpointUrl() {
+    return LLM_CONFIG.baseUrl + LLM_CONFIG.chatEndpoint;
+}
 
-    function buildEndpointUrl(hostname) {
-        return `http://${hostname}:${LLM_PORT}${LLM_PATH}`;
-    }
+function buildMessages(text) {
+    return [
+        {
+            role: 'system',
+            content: 'Return ONLY valid JSON. No explanation. No markdown. No extra text.',
+        },
+        {
+            role: 'user',
+            content: [
+                'Analyze this memory and return SceneData JSON.',
+                '',
+                'Fields:',
+                '{"location":"string","time_of_day":"morning|afternoon|evening|night","weather":"clear|overcast|rain|fog","atmosphere":"tense|calm|melancholic|euphoric|neutral","emotion_valence":-1.0 to 1.0,"emotion_intensity":0.0 to 1.0,"persons":["string"],"hidden_context_candidates":["string"]}',
+                '',
+                'Memory:',
+                text,
+            ].join('\n'),
+        },
+    ];
+}
 
-    function getEndpointCandidates() {
-        const configuredEndpoint = getConfiguredEndpoint();
-        if (configuredEndpoint) return [configuredEndpoint];
+function buildBody(text) {
+    return {
+        model: LLM_CONFIG.model,
+        messages: buildMessages(text),
+        max_tokens: LLM_CONFIG.maxTokens,
+        temperature: LLM_CONFIG.temperature,
+    };
+}
 
-        const candidates = [];
-        const pageHost = window.location && window.location.hostname ? window.location.hostname : '';
+function extractJsonObject(responseText) {
+    let cleaned = responseText;
+    // Remove markdown code fences
+    cleaned = cleaned.replace(/```json\s*/gi, '');
+    cleaned = cleaned.replace(/```\s*/g, '');
 
-        if (pageHost) {
-            candidates.push(buildEndpointUrl(pageHost));
-        }
+    const start = cleaned.indexOf('{');
+    const end = cleaned.lastIndexOf('}');
 
-        candidates.push(buildEndpointUrl('127.0.0.1'));
-        candidates.push(buildEndpointUrl('localhost'));
-
-        return [...new Set(candidates)];
-    }
-
-    function buildPrompt(text) {
-        return [
-            'Return JSON only. No markdown. No explanation. No extra text.',
-            'Analyze the memory text and return exactly this SceneData JSON shape:',
-            '{',
-            '  "location": "string",',
-            '  "time_of_day": "string",',
-            '  "weather": "string",',
-            '  "atmosphere": "string",',
-            '  "emotion_valence": number,',
-            '  "emotion_intensity": number,',
-            '  "persons": ["string"],',
-            '  "hidden_context_candidates": ["string"]',
-            '}',
-            'Keep emotion_valence between -1 and 1.',
-            'Keep emotion_intensity between 0 and 1.',
-            'Use short strings for location, time_of_day, weather, and atmosphere.',
-            'Use an empty array when persons or hidden_context_candidates are unknown.',
-            '',
-            'Memory text:',
-            text,
-        ].join('\n');
-    }
-
-    function extractJsonObject(responseText) {
-        const start = responseText.indexOf('{');
-        const end = responseText.lastIndexOf('}');
-
-        if (start === -1 || end === -1 || end < start) {
-            return null;
-        }
-
-        try {
-            return JSON.parse(responseText.slice(start, end + 1));
-        } catch (_error) {
-            return null;
-        }
-    }
-
-    let serverHealthy = true;
-    let lastHealthCheck = 0;
-    const HEALTH_CHECK_INTERVAL = 5000; // 5 saniye
-
-    async function checkServerHealth(endpoint) {
-        const now = Date.now();
-        if (now - lastHealthCheck < HEALTH_CHECK_INTERVAL && !serverHealthy) {
-            return false;
-        }
-        lastHealthCheck = now;
-        try {
-            const controller = new AbortController();
-            const timeoutId = window.setTimeout(() => controller.abort(), 3000);
-            const response = await fetch(endpoint, {
-                method: 'OPTIONS',
-                signal: controller.signal,
-            });
-            window.clearTimeout(timeoutId);
-            serverHealthy = response.ok;
-            return serverHealthy;
-        } catch (_e) {
-            serverHealthy = false;
-            return false;
-        }
-    }
-
-    async function requestCompletion(endpoint, text) {
-        const controller = new AbortController();
-        const timeoutId = window.setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
-
-        try {
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                signal: controller.signal,
-                body: JSON.stringify({
-                    prompt: buildPrompt(text),
-                    n_predict: 512,
-                    temperature: 0.1,
-                    stop: ['\n\n'],
-                }),
-            });
-
-            if (!response.ok) {
-                console.warn(`[LLM] Request failed for ${endpoint}:`, response.status, response.statusText);
-                return null;
-            }
-
-            const payload = await response.json();
-            const responseText = typeof payload.content === 'string' ? payload.content : '';
-            return extractJsonObject(responseText);
-        } catch (error) {
-            if (error && error.name === 'AbortError') {
-                console.warn(`[LLM] Request timed out for ${endpoint} after ${LLM_TIMEOUT_MS}ms`);
-                return null;
-            }
-
-            console.warn('[LLM] Unexpected error:', error && error.message ? error.message : error);
-            return null;
-        } finally {
-            window.clearTimeout(timeoutId);
-        }
-    }
-
-    async function llm_analyze_memory(text) {
-        const endpoints = getEndpointCandidates();
-
-        for (let index = 0; index < endpoints.length; index += 1) {
-            const endpoint = endpoints[index];
-
-            // Health check: server sağ mı?
-            const healthy = await checkServerHealth(endpoint);
-            if (!healthy) {
-                console.warn(`[LLM] Server unhealthy at ${endpoint}, skipping`);
-                if (index === endpoints.length - 1) {
-                    serverHealthy = true; // Reset for next attempt
-                    return null;
-                }
-                continue;
-            }
-
-            try {
-                const scene = await requestCompletion(endpoint, text);
-                if (scene) return scene;
-                if (index === endpoints.length - 1) return null;
-            } catch (error) {
-                console.warn(`[LLM] Network request failed for ${endpoint}:`, error.message || error);
-                serverHealthy = false;
-                if (index === endpoints.length - 1) return null;
-            }
-        }
-
+    if (start === -1 || end === -1 || end < start) {
         return null;
     }
 
-    window.llm_analyze_memory = llm_analyze_memory;
+    try {
+        return JSON.parse(cleaned.slice(start, end + 1));
+    } catch (_error) {
+        return null;
+    }
+}
 
-    console.log('[LLM] Module ready, endpoints:', getEndpointCandidates().join(', '), '| health check enabled');
-}());
+async function requestCompletion(text) {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 15000);
+    const endpoint = getEndpointUrl();
+
+    try {
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(buildBody(text)),
+            signal: controller.signal,
+        });
+        window.clearTimeout(timeoutId);
+
+        if (!response.ok) {
+            console.warn('[LLM] Request failed:', response.status, response.statusText);
+            return null;
+        }
+
+        const payload = await response.json();
+        const content = payload.choices
+            && payload.choices[0]
+            && payload.choices[0].message
+            && typeof payload.choices[0].message.content === 'string'
+            ? payload.choices[0].message.content
+            : '';
+
+        if (!content) {
+            console.warn('[LLM] Empty content in response');
+            return null;
+        }
+
+        const sceneData = extractJsonObject(content);
+        if (!sceneData) {
+            console.warn('[LLM] No valid JSON in content');
+            return null;
+        }
+
+        return sceneData;
+    } catch (error) {
+        window.clearTimeout(timeoutId);
+        console.warn('[LLM] Unexpected error:', error && error.message ? error.message : error);
+        return null;
+    }
+}
+
+async function llm_analyze_memory(text) {
+    console.log('[LLM] Analyzing memory...');
+    return await requestCompletion(text);
+}
+
+function llmTest(text) {
+    if (typeof window.llm_analyze_memory !== 'function') {
+        console.warn('[LLM] Analyzer not available');
+        return null;
+    }
+
+    return window.llm_analyze_memory(text);
+}
+
+(function loadModule() {
+    if (typeof window._kpLLM !== 'undefined') return;
+
+    window._kpLLM = {
+        analyze_memory: llm_analyze_memory,
+        test: llmTest,
+    };
+
+    console.log('[LLM] Module ready, endpoint:', getEndpointUrl());
+})();
