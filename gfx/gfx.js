@@ -1,24 +1,55 @@
 async function init() {
-    const canvas = document.getElementById('c');
-    let hasWebGPU = false;
+    // ============================================================
+    // BOOT DIAGNOSTICS — measure each stage
+    // ============================================================
+    const diag = {
+        secure_context: window.isSecureContext,
+        page_url: location.href,
+        has_navigator_gpu: false,
+        adapter_ok: false,
+        device_ok: false,
+        gpu_stage: 'not_started',
+        gpu_error: '',
+        wasm_ok: false,
+        wasm_error: '',
+    };
 
-    // ============================================================
-    // WebGPU setup — identical to Phase 2, no changes needed
-    // ============================================================
-    try {
-        if (!navigator.gpu) throw new Error('WebGPU not supported');
-        const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
-        if (!adapter) throw new Error('No WebGPU adapter found');
-        var device = await adapter.requestDevice();
-        hasWebGPU = true;
-        console.log('[GPU] WebGPU ready');
-    } catch (e) {
-        console.warn('[GPU] WebGPU unavailable:', e.message);
+    // Stage 1: navigator.gpu exists?
+    diag.has_navigator_gpu = !!navigator.gpu;
+    if (!diag.has_navigator_gpu) {
+        diag.gpu_stage = 'api_missing';
     }
 
-    // ============================================================
-    // WASM loading — always runs, exposes globals for parser.js
-    // ============================================================
+    // Stage 2: adapter
+    let adapter = null;
+    if (diag.gpu_stage === 'not_started') {
+        try {
+            adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+            if (!adapter) {
+                diag.gpu_stage = 'adapter_null';
+            } else {
+                diag.adapter_ok = true;
+            }
+        } catch (e) {
+            diag.gpu_stage = 'adapter_error';
+            diag.gpu_error = e.message || String(e);
+        }
+    }
+
+    // Stage 3: device
+    let device = null;
+    if (diag.gpu_stage === 'not_started') {
+        try {
+            device = await adapter.requestDevice();
+            diag.device_ok = true;
+            diag.gpu_stage = 'ok';
+        } catch (e) {
+            diag.gpu_stage = 'device_failed';
+            diag.gpu_error = e.message || String(e);
+        }
+    }
+
+    // Stage 4: WASM
     let wasm = null;
     try {
         const { instance } = await WebAssembly.instantiateStreaming(
@@ -27,11 +58,23 @@ async function init() {
         wasm = instance.exports;
         wasm.sim_init(42);
         window._kpWasm = wasm;
-        console.log('[WASM] sim loaded');
+        diag.wasm_ok = true;
     } catch (e) {
-        console.error('[WASM] load failed:', e.message);
-        window._kpWasm = null;
+        diag.wasm_ok = false;
+        diag.wasm_error = e.message || String(e);
     }
+
+    // Publish diagnostics
+    window._kpBootDiag = diag;
+    console.log('[BOOT] ' + JSON.stringify(diag));
+
+    // ============================================================
+    // Original boot continues from here (unchanged behavior)
+    // ============================================================
+    const canvas = document.getElementById('c');
+
+    // Derive runtime state from diagnostics
+    const hasWebGPU = diag.gpu_stage === 'ok';
 
     if (!hasWebGPU || !wasm) {
         let activeBranchCount = 1;
