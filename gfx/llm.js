@@ -4,7 +4,7 @@ const LLM_CONFIG = {
     baseUrl: 'http://127.0.0.1:8080/v1',
     chatEndpoint: '/chat/completions',
     model: 'gemma-3-4b-it-Q4_K_M.gguf',
-    maxTokens: 1024,
+    maxTokens: 128,
     temperature: 0.1,
 };
 
@@ -124,6 +124,8 @@ function llmTest(text) {
 
 (function loadModule() {
     if (typeof window._kpLLM !== 'undefined') return;
+
+    window.llm_analyze_memory = llm_analyze_memory;
 
     window._kpLLM = {
         analyze_memory: llm_analyze_memory,

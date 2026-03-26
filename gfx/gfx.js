@@ -1,21 +1,83 @@
 async function init() {
     const canvas = document.getElementById('c');
+    let hasWebGPU = false;
 
     // ============================================================
     // WebGPU setup — identical to Phase 2, no changes needed
     // ============================================================
-    if (!navigator.gpu) {
-        document.body.innerHTML = '<p style="color:red;padding:2em;font-size:1.5em">WebGPU not supported. Use Chrome 113+ or Edge 113+.</p>';
+    try {
+        if (!navigator.gpu) throw new Error('WebGPU not supported');
+        const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+        if (!adapter) throw new Error('No WebGPU adapter found');
+        var device = await adapter.requestDevice();
+        hasWebGPU = true;
+        console.log('[GPU] WebGPU ready');
+    } catch (e) {
+        console.warn('[GPU] WebGPU unavailable:', e.message);
+    }
+
+    // ============================================================
+    // WASM loading — always runs, exposes globals for parser.js
+    // ============================================================
+    let wasm = null;
+    try {
+        const { instance } = await WebAssembly.instantiateStreaming(
+            fetch('../zig-out/bin/kernel-panic-sim.wasm'),
+        );
+        wasm = instance.exports;
+        wasm.sim_init(42);
+        window._kpWasm = wasm;
+        console.log('[WASM] sim loaded');
+    } catch (e) {
+        console.error('[WASM] load failed:', e.message);
+        window._kpWasm = null;
+    }
+
+    if (!hasWebGPU || !wasm) {
+        let activeBranchCount = 1;
+        function updatePanicDisplay() {
+            if (!wasm) return;
+            const panicEl = document.getElementById('kp-panic-scores');
+            const branchEl = document.getElementById('kp-branch-list');
+            const sceneEl = document.getElementById('kp-scene-data');
+            if (!panicEl || !branchEl) return;
+            let panicHtml = '';
+            let branchHtml = '';
+            for (let i = 0; i < activeBranchCount; i++) {
+                const score = wasm.sim_panic_score(i);
+                const isPanic = score > 1.0;
+                const color = i === 0 ? '#FFFFFF' : i === 1 ? '#00C8FF' : i === 2 ? '#FFC800' : '#FF8000';
+                panicHtml += `<div class="${isPanic ? 'panic-alert' : ''}">b${i}: ${score.toFixed(4)}</div>`;
+                branchHtml += `<div style="color:${color}">b${i} ${isPanic ? '⚠ PANIC' : ''}</div>`;
+            }
+            panicEl.innerHTML = panicHtml;
+            branchEl.innerHTML = branchHtml;
+            if (!sceneEl) return;
+            const sceneData = window._kpSceneData || {};
+            const sceneRows = [
+                ['source', sceneData.source ? sceneData.source.toUpperCase() : '-'],
+                ['location', sceneData.location || '-'],
+                ['time', sceneData.time_of_day || '-'],
+                ['weather', sceneData.weather || '-'],
+                ['atmosphere', sceneData.atmosphere || '-'],
+                ['valence', Number.isFinite(sceneData.emotion_valence) ? sceneData.emotion_valence.toFixed(3) : '-'],
+                ['intensity', Number.isFinite(sceneData.emotion_intensity) ? sceneData.emotion_intensity.toFixed(3) : '-'],
+                ['llm_status', sceneData.llm_status || '-'],
+                ['latency_ms', sceneData.llm_latency_ms ?? '-'],
+                ['fallback_reason', sceneData.fallback_reason || '-'],
+            ];
+            sceneEl.innerHTML = sceneRows.map(([key, value]) => (
+                `<div class="scene-row"><span class="scene-key">${key}</span><span class="scene-value">${value}</span></div>`
+            )).join('');
+        }
+        window._kpUpdatePanic = function () { updatePanicDisplay(); };
+        console.log('[INIT] UI-only mode (no render)');
         return;
     }
 
-    const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
-    if (!adapter) {
-        document.body.innerHTML = '<p style="color:red;padding:2em;font-size:1.5em">No WebGPU adapter found.</p>';
-        return;
-    }
-    const device = await adapter.requestDevice();
-
+    // ============================================================
+    // WebGPU render path — below only runs if hasWebGPU && wasm
+    // ============================================================
     const context = canvas.getContext('webgpu');
     const format = navigator.gpu.getPreferredCanvasFormat();
     context.configure({ device, format, alphaMode: 'premultiplied' });
@@ -27,6 +89,19 @@ async function init() {
     }
     resize();
     window.addEventListener('resize', resize);
+
+    // Track active branch count from JS side (mirrors wasm internal state)
+    let activeBranchCount = 1;
+
+    // DataView for reading WASM linear memory (must be recreated on memory.growth)
+    let mem = new DataView(wasm.memory.buffer);
+
+    // Panic display update — called by parser.js after event injection
+    window._kpUpdatePanic = function () {
+        updatePanicDisplay();
+    };
+
+    console.log('[INIT] WASM loaded, sim running, WebGPU render active');
 
     // ============================================================
     // Shaders — unchanged from Phase 2
@@ -183,33 +258,6 @@ async function init() {
     });
 
     // ============================================================
-    // WASM loading — sim_init(42) on load, expose exports globally
-    // ============================================================
-    const { instance } = await WebAssembly.instantiateStreaming(
-        fetch('../zig-out/bin/kernel-panic-sim.wasm'),
-    );
-    const wasm = instance.exports;
-
-    // Initialize simulation session with seed 42
-    wasm.sim_init(42);
-
-    // Track active branch count from JS side (mirrors wasm internal state)
-    let activeBranchCount = 1;
-
-    // DataView for reading WASM linear memory (must be recreated on memory.growth)
-    let mem = new DataView(wasm.memory.buffer);
-
-    // Expose WASM globally for parser.js
-    window._kpWasm = wasm;
-
-    // Panic display update — called by parser.js after event injection
-    window._kpUpdatePanic = function () {
-        updatePanicDisplay();
-    };
-
-    console.log('Phase 3: WASM loaded, sim running');
-
-    // ============================================================
     // Branch color mapping — deterministic per branch_id
     // ============================================================
     // WHY branch-based colors: lets the eye track which timeline is which
@@ -291,6 +339,9 @@ async function init() {
             ['atmosphere', sceneData.atmosphere || '-'],
             ['valence', Number.isFinite(sceneData.emotion_valence) ? sceneData.emotion_valence.toFixed(3) : '-'],
             ['intensity', Number.isFinite(sceneData.emotion_intensity) ? sceneData.emotion_intensity.toFixed(3) : '-'],
+            ['llm_status', sceneData.llm_status || '-'],
+            ['latency_ms', sceneData.llm_latency_ms ?? '-'],
+            ['fallback_reason', sceneData.fallback_reason || '-'],
         ];
 
         sceneEl.innerHTML = sceneRows.map(([key, value]) => (

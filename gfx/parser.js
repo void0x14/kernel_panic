@@ -256,53 +256,105 @@
     // CHANNEL 1: Free Text
     // ============================================================
     async function injectText(text) {
-        if (!window._kpWasm) { console.error('WASM not ready'); return; }
         const wasm = window._kpWasm;
 
         const timestamp = BigInt(Date.now()) * 1000000n;
+        const startTime = performance.now();
 
-        // UI feedback: LLM sorgusu başlıyor
-        const sceneEl = document.getElementById('kp-scene-data');
-        const sourceEl = sceneEl ? sceneEl.querySelector('.scene-row:first-child .scene-value') : null;
-        if (sourceEl) sourceEl.textContent = 'QUERYING...';
-
-        let rawLlmScene = null;
-        let llmError = null;
-
-        if (typeof window.llm_analyze_memory === 'function') {
-            try {
-                rawLlmScene = await window.llm_analyze_memory(text);
-            } catch (err) {
-                llmError = err;
-                console.warn('[LLM] Analyze failed:', err.message || err);
-            }
-        }
-
-        const sceneData = buildSceneData(text, rawLlmScene);
-
-        if (sceneData.source === 'llm') {
-            console.log('[LLM] SceneData accepted');
-        } else {
-            const reason = llmError ? 'error' : (rawLlmScene === null ? 'unreachable' : 'invalid');
-            console.log(`[LLM] Fallback to keyword scoring (reason: ${reason})`);
-        }
+        const sceneData = buildSceneData(text, null);
 
         window._kpSceneData = sceneData;
 
-        const result = writeMemoryEvent(
-            wasm,
-            null,
-            0,
-            timestamp,
-            sceneData.location,
-            sceneData.emotion_valence,
-            sceneData.emotion_intensity,
-            sceneData.sigma,
-        );
-        logParsed(result);
+        if (wasm) {
+            const result = writeMemoryEvent(
+                wasm,
+                null,
+                0,
+                timestamp,
+                sceneData.location,
+                sceneData.emotion_valence,
+                sceneData.emotion_intensity,
+                sceneData.sigma,
+            );
+            logParsed(result);
+        } else {
+            console.log(`[SIM] skip (no wasm) location="${sceneData.location}" valence=${sceneData.emotion_valence.toFixed(3)} intensity=${sceneData.emotion_intensity.toFixed(3)}`);
+        }
 
-        // Update UI panic display
         if (window._kpUpdatePanic) window._kpUpdatePanic();
+
+        updateScenePanel(sceneData, 'fallback', 0);
+
+        const latency = performance.now() - startTime;
+        console.log(`[LLM] status=fallback latency_ms=${Math.round(latency)} source=fallback`);
+
+        if (typeof window.llm_analyze_memory !== 'function') {
+            return;
+        }
+
+        const llmStartTime = performance.now();
+        let rawLlmScene = null;
+        let llmStatus = 'unreachable';
+        let fallbackReason = 'unreachable';
+
+        try {
+            rawLlmScene = await window.llm_analyze_memory(text);
+            if (rawLlmScene && typeof rawLlmScene === 'object') {
+                llmStatus = 'ok';
+                fallbackReason = '';
+            } else {
+                llmStatus = 'invalid_json';
+                fallbackReason = 'invalid';
+            }
+        } catch (err) {
+            if (err.name === 'AbortError') {
+                llmStatus = 'timeout';
+                fallbackReason = 'timeout';
+            } else {
+                llmStatus = 'http_error';
+                fallbackReason = 'error';
+            }
+        }
+
+        const llmLatency = performance.now() - llmStartTime;
+
+        if (llmStatus === 'ok') {
+            const refinedSceneData = buildSceneData(text, rawLlmScene);
+            refinedSceneData.source = 'llm';
+            refinedSceneData.llm_status = llmStatus;
+            refinedSceneData.llm_latency_ms = Math.round(llmLatency);
+
+            window._kpSceneData = refinedSceneData;
+
+            updateScenePanel(refinedSceneData, 'llm', llmLatency);
+
+            console.log(`[LLM] status=${llmStatus} latency_ms=${Math.round(llmLatency)} source=llm`);
+        } else {
+            sceneData.llm_status = llmStatus;
+            sceneData.llm_latency_ms = Math.round(llmLatency);
+            sceneData.fallback_reason = fallbackReason;
+
+            updateScenePanel(sceneData, 'fallback', llmLatency);
+
+            console.log(`[LLM] status=${llmStatus} latency_ms=${Math.round(llmLatency)} source=fallback`);
+        }
+    }
+
+    function updateScenePanel(sceneData, source, latencyMs) {
+        const sceneEl = document.getElementById('kp-scene-data');
+        if (!sceneEl) return;
+
+        const rows = sceneEl.querySelectorAll('.scene-row');
+        if (rows.length >= 1) rows[0].querySelector('.scene-value').textContent = source;
+        if (rows.length >= 2) rows[1].querySelector('.scene-value').textContent = sceneData.location || '-';
+        if (rows.length >= 3) rows[2].querySelector('.scene-value').textContent = sceneData.time_of_day || '-';
+        if (rows.length >= 4) rows[3].querySelector('.scene-value').textContent = sceneData.weather || '-';
+        if (rows.length >= 5) rows[4].querySelector('.scene-value').textContent = sceneData.atmosphere || '-';
+        if (rows.length >= 6) rows[5].querySelector('.scene-value').textContent = sceneData.emotion_valence?.toFixed(3) || '-';
+        if (rows.length >= 7) rows[6].querySelector('.scene-value').textContent = sceneData.emotion_intensity?.toFixed(3) || '-';
+        if (rows.length >= 8) rows[7].querySelector('.scene-value').textContent = sceneData.llm_status || '-';
+        if (rows.length >= 9) rows[8].querySelector('.scene-value').textContent = sceneData.llm_latency_ms || '-';
+        if (rows.length >= 10) rows[9].querySelector('.scene-value').textContent = sceneData.fallback_reason || '-';
     }
 
     async function llmTest(text) {
