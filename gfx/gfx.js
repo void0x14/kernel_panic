@@ -73,6 +73,92 @@ async function init() {
     // ============================================================
     const canvas = document.getElementById('c');
 
+    function clamp01(value) {
+        return Math.min(1, Math.max(0, value));
+    }
+
+    function lerp(a, b, t) {
+        return a + (b - a) * t;
+    }
+
+    function mixColor(a, b, t) {
+        return [
+            lerp(a[0], b[0], t),
+            lerp(a[1], b[1], t),
+            lerp(a[2], b[2], t),
+        ];
+    }
+
+    function colorToCss(color, alpha) {
+        return `rgba(${Math.round(clamp01(color[0]) * 255)}, ${Math.round(clamp01(color[1]) * 255)}, ${Math.round(clamp01(color[2]) * 255)}, ${alpha})`;
+    }
+
+    function getAmbientTint(timeOfDay) {
+        switch (timeOfDay) {
+            case 'morning': return [0.72, 0.80, 0.92];
+            case 'afternoon': return [0.92, 0.92, 0.86];
+            case 'evening': return [0.88, 0.58, 0.36];
+            case 'night': return [0.14, 0.18, 0.34];
+            default: return [0.42, 0.46, 0.52];
+        }
+    }
+
+    function getAtmosphereTint(atmosphere) {
+        switch (atmosphere) {
+            case 'tense': return [0.72, 0.18, 0.16];
+            case 'calm': return [0.18, 0.46, 0.66];
+            case 'melancholic': return [0.36, 0.34, 0.54];
+            case 'euphoric': return [0.94, 0.72, 0.28];
+            case 'neutral': return [0.38, 0.40, 0.42];
+            default: return [0.38, 0.40, 0.42];
+        }
+    }
+
+    function getFogScalar(weather) {
+        switch (weather) {
+            case 'clear': return 0.02;
+            case 'overcast': return 0.18;
+            case 'rain': return 0.30;
+            case 'fog': return 0.52;
+            default: return 0.10;
+        }
+    }
+
+    function buildVisualState(sceneData, panicScore) {
+        const ambientTint = getAmbientTint(sceneData.time_of_day);
+        const atmosphereTint = getAtmosphereTint(sceneData.atmosphere);
+        const fogScalar = getFogScalar(sceneData.weather);
+        const intensity = Number.isFinite(sceneData.emotion_intensity) ? clamp01(sceneData.emotion_intensity) : 0;
+        const panic = Number.isFinite(panicScore) ? clamp01(panicScore / 1.5) : 0;
+        const desaturationScalar = clamp01(panic * 0.85);
+        const distortionScalar = clamp01(panic * 0.9 + intensity * 0.25);
+        const jitterScalar = clamp01(intensity * 0.75);
+        const clearColor = mixColor(ambientTint, atmosphereTint, 0.38 + panic * 0.2);
+
+        return {
+            ambient_tint: ambientTint,
+            atmosphere_tint: atmosphereTint,
+            fog_scalar: fogScalar,
+            jitter_scalar: jitterScalar,
+            distortion_scalar: distortionScalar,
+            desaturation_scalar: desaturationScalar,
+            clear_color: clearColor,
+        };
+    }
+
+    function applyVisualState(sceneData, panicScore) {
+        const visualState = buildVisualState(sceneData || {}, panicScore);
+        const topColor = mixColor(visualState.clear_color, [1, 1, 1], 0.08);
+        const bottomColor = mixColor(visualState.clear_color, [0, 0, 0], 0.72 + visualState.desaturation_scalar * 0.12);
+        const hazeAlpha = clamp01(0.16 + visualState.fog_scalar * 0.55);
+        document.body.style.background = `radial-gradient(circle at top, ${colorToCss(topColor, 0.96)} 0%, ${colorToCss(visualState.atmosphere_tint, 0.42)} 38%, ${colorToCss(bottomColor, 1)} 100%)`;
+        canvas.style.filter = `blur(${(visualState.fog_scalar * 3.5).toFixed(2)}px) saturate(${(1 - visualState.desaturation_scalar * 0.55).toFixed(2)}) contrast(${(1 + visualState.distortion_scalar * 0.18).toFixed(2)}) brightness(${(0.92 + (1 - visualState.fog_scalar) * 0.12).toFixed(2)})`;
+        canvas.style.opacity = `${(0.88 + (1 - visualState.fog_scalar) * 0.12).toFixed(2)}`;
+        canvas.style.boxShadow = `inset 0 0 ${Math.round(36 + visualState.distortion_scalar * 90)}px ${colorToCss(visualState.atmosphere_tint, hazeAlpha)}`;
+        window._kpVisualState = visualState;
+        return visualState;
+    }
+
     // Derive runtime state from diagnostics
     const hasWebGPU = diag.gpu_stage === 'ok';
 
@@ -97,6 +183,7 @@ async function init() {
             branchEl.innerHTML = branchHtml;
             if (!sceneEl) return;
             const sceneData = window._kpSceneData || {};
+            applyVisualState(sceneData, wasm.sim_panic_score(0));
             const sceneRows = [
                 ['source', sceneData.source ? sceneData.source.toUpperCase() : '-'],
                 ['location', sceneData.location || '-'],
@@ -113,8 +200,8 @@ async function init() {
                 `<div class="scene-row"><span class="scene-key">${key}</span><span class="scene-value">${value}</span></div>`
             )).join('');
         }
-        window._kpUpdatePanic = function () { updatePanicDisplay(); };
-        console.log('[INIT] UI-only mode (no render)');
+        setInterval(updatePanicDisplay, 250);
+        console.log('[INIT] UI-only mode (no render) - polling active');
         return;
     }
 
@@ -138,11 +225,6 @@ async function init() {
 
     // DataView for reading WASM linear memory (must be recreated on memory.growth)
     let mem = new DataView(wasm.memory.buffer);
-
-    // Panic display update — called by parser.js after event injection
-    window._kpUpdatePanic = function () {
-        updatePanicDisplay();
-    };
 
     console.log('[INIT] WASM loaded, sim running, WebGPU render active');
 
@@ -443,11 +525,14 @@ async function init() {
             // Compute panic score for color decision
             const panicScore = wasm.sim_panic_score(i);
             const [r, g, b] = getBranchColor(i, panicScore);
+            const visualState = buildVisualState(window._kpSceneData || {}, wasm.sim_panic_score(0));
+            const jitter = visualState.jitter_scalar * (1 + visualState.distortion_scalar) * 0.035;
+            const phase = performance.now() * 0.008 + i * 1.7;
 
             // Write interleaved [x, y, z, r, g, b] into vertex buffer
             const off = i * 6;
-            vertexData[off + 0] = x;
-            vertexData[off + 1] = y;
+            vertexData[off + 0] = x + Math.sin(phase) * jitter;
+            vertexData[off + 1] = y + Math.cos(phase * 1.37) * jitter;
             vertexData[off + 2] = z;
             vertexData[off + 3] = r;
             vertexData[off + 4] = g;
@@ -457,9 +542,9 @@ async function init() {
         // Upload vertex data to GPU — only active branches
         device.queue.writeBuffer(vertexBuffer, 0, vertexData, 0, activeBranchCount * 6);
 
-        // Self-test: log branch stats every second
+        // Self-test: log branch stats every 250ms
         const now = performance.now();
-        if (now - lastLogTime > 1000) {
+        if (now - lastLogTime > 250) {
             logStatus();
             updatePanicDisplay();
             lastLogTime = now;
@@ -468,12 +553,18 @@ async function init() {
         // Standard WebGPU render pass
         const vpMatrix = getViewProjMatrix();
         device.queue.writeBuffer(uniformBuffer, 0, vpMatrix);
+        const activeVisualState = applyVisualState(window._kpSceneData || {}, wasm.sim_panic_score(0));
 
         const encoder = device.createCommandEncoder();
         const pass = encoder.beginRenderPass({
             colorAttachments: [{
                 view: context.getCurrentTexture().createView(),
-                clearValue: { r: 0.039, g: 0.039, b: 0.039, a: 1.0 },
+                clearValue: {
+                    r: activeVisualState.clear_color[0],
+                    g: activeVisualState.clear_color[1],
+                    b: activeVisualState.clear_color[2],
+                    a: 1.0,
+                },
                 loadOp: 'clear',
                 storeOp: 'store',
             }],
