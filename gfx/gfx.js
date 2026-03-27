@@ -368,6 +368,95 @@ async function init() {
         return metric;
     }
 
+    function getDriftLevel(delta) {
+        if (delta >= 0.5) return 'split';
+        if (delta >= 0.15) return 'shifting';
+        return 'stable';
+    }
+
+    function getBranchColorCss(branchId) {
+        if (branchId === 0) return '#FFFFFF';
+        if (branchId === 1) return '#00C8FF';
+        if (branchId === 2) return '#FFC800';
+        return '#FF8000';
+    }
+
+    function buildCompareState() {
+        const focusBranchId = narrativeState.selectedBranchId;
+        const baseMetric = ensureBranchMetric(0);
+        const focusMetric = ensureBranchMetric(focusBranchId);
+        const baseScore = wasm ? wasm.sim_panic_score(0) : baseMetric.currentPanic;
+        const focusScore = wasm ? wasm.sim_panic_score(focusBranchId) : focusMetric.currentPanic;
+        const currentDelta = Math.abs(focusScore - baseScore);
+        const criticalTick = focusMetric.criticalTick || 0;
+        const forkEntry = getRelevantForkEntry(focusBranchId);
+
+        return {
+            focusBranchId,
+            baseScore,
+            focusScore,
+            currentDelta,
+            driftLevel: getDriftLevel(currentDelta),
+            peakDelta: focusMetric.maxDelta,
+            criticalTick,
+            forkEntry,
+        };
+    }
+
+    function enrichTimelineEvent(event) {
+        const branchId = Number.isInteger(event.targetBranchId) ? event.targetBranchId : event.branchId;
+        const metric = ensureBranchMetric(branchId);
+        const baseMetric = ensureBranchMetric(0);
+        const currentDelta = Math.abs(metric.currentPanic - baseMetric.currentPanic);
+        return {
+            branchId,
+            currentDelta,
+            peakDelta: metric.maxDelta,
+            criticalTick: metric.criticalTick || 0,
+            driftLevel: getDriftLevel(metric.maxDelta || currentDelta),
+        };
+    }
+
+    function buildBranchPathHtml(compareState) {
+        const nodes = ['<span class="branch-path-node" data-role="root">b0 root</span>'];
+        if (compareState.focusBranchId === 0) {
+            nodes.push('<span class="branch-path-edge">-></span>');
+            nodes.push('<span class="branch-path-node" data-role="focus">b0 active</span>');
+            return nodes.join('');
+        }
+
+        const coeff = compareState.forkEntry && typeof compareState.forkEntry.divergenceCoeff === 'number'
+            ? compareState.forkEntry.divergenceCoeff.toFixed(2)
+            : '--';
+        nodes.push('<span class="branch-path-edge">-></span>');
+        nodes.push(`<span class="branch-path-node">fork coeff ${escapeHtml(coeff)}</span>`);
+        nodes.push('<span class="branch-path-edge">-></span>');
+        nodes.push(`<span class="branch-path-node" data-role="focus">b${compareState.focusBranchId} focus</span>`);
+        if (compareState.criticalTick > 0) {
+            nodes.push('<span class="branch-path-edge">-></span>');
+            nodes.push(`<span class="branch-path-node" data-role="critical">tick ${escapeHtml(String(compareState.criticalTick))}</span>`);
+        }
+        return nodes.join('');
+    }
+
+    function buildTimelinePathHtml(entry, eventState, focusBranchId) {
+        const sourceId = Number.isInteger(entry.sourceBranchId) ? entry.sourceBranchId : 0;
+        const targetId = Number.isInteger(entry.targetBranchId) ? entry.targetBranchId : eventState.branchId;
+        const chips = [
+            `<span class="timeline-chip">b${escapeHtml(String(sourceId))}</span>`,
+            '<span class="timeline-path-edge">-></span>',
+            `<span class="timeline-chip" data-kind="${targetId === focusBranchId ? 'focus' : 'branch'}">b${escapeHtml(String(targetId))}</span>`,
+        ];
+        chips.push(`<span class="timeline-chip" data-kind="delta">d ${escapeHtml(eventState.currentDelta.toFixed(3))}</span>`);
+        if (entry.type === 'fork' && typeof entry.divergenceCoeff === 'number') {
+            chips.push(`<span class="timeline-chip">c ${escapeHtml(entry.divergenceCoeff.toFixed(2))}</span>`);
+        }
+        if (eventState.criticalTick > 0 && eventState.peakDelta > 0) {
+            chips.push(`<span class="timeline-chip" data-kind="critical">tick ${escapeHtml(String(eventState.criticalTick))}</span>`);
+        }
+        return chips.join('');
+    }
+
     function getTimelineEntry(index) {
         return Number.isInteger(index) && index >= 0 && index < narrativeState.timeline.length
             ? narrativeState.timeline[index]
@@ -517,9 +606,13 @@ async function init() {
         const hiddenSignalEl = document.getElementById('kp-hidden-signal');
         const hiddenRevealBtn = document.getElementById('kp-hidden-reveal');
         const hiddenDetailEl = document.getElementById('kp-hidden-context-detail');
-        const compareEl = document.getElementById('kp-branch-compare');
+        const compareRowsEl = document.getElementById('kp-branch-compare-rows');
+        const baseBranchCardEl = document.getElementById('kp-base-branch-card');
+        const focusBranchCardEl = document.getElementById('kp-focus-branch-card');
+        const deltaSummaryEl = document.getElementById('kp-delta-summary');
+        const criticalPointEl = document.getElementById('kp-critical-point');
+        const branchPathEl = document.getElementById('kp-branch-path');
         const selectedEventEl = document.getElementById('kp-selected-event');
-        const driftIndicatorEl = document.getElementById('kp-drift-indicator');
         const divergenceValueEl = document.getElementById('kp-divergence-value');
         const divergenceSlider = document.getElementById('kp-divergence');
         const forkBtn = document.getElementById('kp-fork-now');
@@ -538,6 +631,7 @@ async function init() {
         const selectedScene = getSelectedSceneSnapshot();
         const selectedBranchScore = wasm ? wasm.sim_panic_score(narrativeState.selectedBranchId) : 0;
         const worldState = computeWorldState(selectedScene || {}, selectedBranchScore, modeState);
+        const compareState = buildCompareState();
         const selectedSignals = Array.isArray(selectedScene && selectedScene.hidden_context_candidates)
             ? selectedScene.hidden_context_candidates.filter((item) => typeof item === 'string' && item.trim().length > 0).slice(0, 4)
             : [];
@@ -589,30 +683,53 @@ async function init() {
             forkBtn.disabled = !wasm || branchCount >= MAX_BRANCHES;
         }
 
-        if (compareEl) {
-            const focusBranchId = narrativeState.selectedBranchId;
-            const baseScore = wasm ? wasm.sim_panic_score(0) : 0;
-            const focusScore = wasm ? wasm.sim_panic_score(focusBranchId) : 0;
-            const forkEntry = getRelevantForkEntry(focusBranchId);
-            const focusMetric = ensureBranchMetric(focusBranchId);
-            const currentDelta = Math.abs(focusScore - baseScore);
-            compareEl.innerHTML = [
-                ['focus', `b${focusBranchId}`],
-                ['base', baseScore.toFixed(4)],
-                ['focus_score', focusScore.toFixed(4)],
-                ['delta', (focusScore - baseScore).toFixed(4)],
-                ['peak_delta', focusMetric.maxDelta.toFixed(4)],
-                ['critical_tick', String(focusMetric.criticalTick || 0)],
-                ['fork', forkEntry ? forkEntry.text : (focusBranchId === 0 ? 'root branch' : 'no fork event yet')],
+        if (compareRowsEl) {
+            compareRowsEl.innerHTML = [
+                ['focus', `b${compareState.focusBranchId}`],
+                ['base', compareState.baseScore.toFixed(4)],
+                ['focus_score', compareState.focusScore.toFixed(4)],
+                ['delta', (compareState.focusScore - compareState.baseScore).toFixed(4)],
+                ['peak_delta', compareState.peakDelta.toFixed(4)],
+                ['critical_tick', String(compareState.criticalTick || 0)],
+                ['fork', compareState.forkEntry ? compareState.forkEntry.text : (compareState.focusBranchId === 0 ? 'root branch' : 'no fork event yet')],
             ].map(([key, value]) => (
                 `<div class="narrative-row"><span class="narrative-key">${escapeHtml(key)}</span><span class="narrative-value">${escapeHtml(value)}</span></div>`
             )).join('');
 
+            const driftIndicatorEl = document.getElementById('kp-drift-indicator');
             if (driftIndicatorEl) {
-                const level = currentDelta >= 0.5 ? 'split' : currentDelta >= 0.15 ? 'shifting' : 'stable';
-                driftIndicatorEl.dataset.level = level;
-                driftIndicatorEl.textContent = level;
+                driftIndicatorEl.dataset.level = compareState.driftLevel;
+                driftIndicatorEl.textContent = compareState.driftLevel;
             }
+        }
+
+        if (baseBranchCardEl) {
+            baseBranchCardEl.innerHTML = `branch <span style="color:${getBranchColorCss(0)}">b0</span><br>panic ${escapeHtml(compareState.baseScore.toFixed(4))}<br>world ${escapeHtml(computeWorldState(selectedScene || {}, compareState.baseScore, modeState).world_response)}`;
+        }
+
+        if (focusBranchCardEl) {
+            focusBranchCardEl.innerHTML = `branch <span style="color:${getBranchColorCss(compareState.focusBranchId)}">b${escapeHtml(String(compareState.focusBranchId))}</span><br>panic ${escapeHtml(compareState.focusScore.toFixed(4))}<br>drift ${escapeHtml(compareState.driftLevel)}`;
+        }
+
+        if (deltaSummaryEl) {
+            if (compareState.focusBranchId === 0) {
+                deltaSummaryEl.textContent = 'Root branch is still aligned. No fork drift selected.';
+            } else {
+                const coeff = compareState.forkEntry && typeof compareState.forkEntry.divergenceCoeff === 'number'
+                    ? compareState.forkEntry.divergenceCoeff.toFixed(2)
+                    : '--';
+                deltaSummaryEl.textContent = `b${compareState.focusBranchId} drifted ${compareState.currentDelta.toFixed(4)} from base; fork coefficient ${coeff}; current mode ${modeState.label.toLowerCase()}.`;
+            }
+        }
+
+        if (criticalPointEl) {
+            criticalPointEl.textContent = compareState.criticalTick > 0
+                ? `Critical divergence locked at tick ${compareState.criticalTick} with peak delta ${compareState.peakDelta.toFixed(4)}.`
+                : 'Critical divergence point is not established yet.';
+        }
+
+        if (branchPathEl) {
+            branchPathEl.innerHTML = buildBranchPathHtml(compareState);
         }
 
         if (hiddenRevealBtn) {
@@ -644,6 +761,7 @@ async function init() {
             if (!selectedEntry) {
                 selectedEventEl.innerHTML = '<div class="timeline-entry"><span class="timeline-text">No event selected.</span></div>';
             } else {
+                const eventState = enrichTimelineEvent(selectedEntry);
                 const sceneSnapshot = selectedEntry.sceneSnapshot;
                 const summary = sceneSnapshot ? summarizeScene(sceneSnapshot) : 'no scene snapshot';
                 const branchLabel = Number.isInteger(selectedEntry.targetBranchId)
@@ -653,12 +771,14 @@ async function init() {
                 if (sceneSnapshot && sceneSnapshot.persons.length > 0) extra.push(`persons ${sceneSnapshot.persons.join(', ')}`);
                 if (sceneSnapshot && sceneSnapshot.hidden_context_candidates.length > 0) extra.push(`hidden ${sceneSnapshot.hidden_context_candidates.length}`);
                 if (typeof selectedEntry.divergenceCoeff === 'number') extra.push(`coeff ${selectedEntry.divergenceCoeff.toFixed(2)}`);
+                extra.push(`delta ${eventState.currentDelta.toFixed(4)}`);
+                if (eventState.criticalTick > 0) extra.push(`critical ${eventState.criticalTick}`);
                 selectedEventEl.innerHTML = [
                     `<div class="narrative-row"><span class="narrative-key">event</span><span class="narrative-value">${escapeHtml(selectedEntry.type)}</span></div>`,
                     `<div class="narrative-row"><span class="narrative-key">time</span><span class="narrative-value">${escapeHtml(formatClockLabel(selectedEntry.timestamp_ms))}</span></div>`,
                     `<div class="narrative-row"><span class="narrative-key">branch</span><span class="narrative-value">${escapeHtml(branchLabel)}</span></div>`,
                     `<div class="narrative-row"><span class="narrative-key">summary</span><span class="narrative-value">${escapeHtml(summary)}</span></div>`,
-                    `<div class="timeline-entry"><span class="timeline-text">${escapeHtml(extra.join(' | ') || selectedEntry.text)}</span></div>`,
+                    `<div class="timeline-entry"><span class="timeline-text">Changed against base: ${escapeHtml(extra.join(' | ') || selectedEntry.text)}</span></div>`,
                 ].join('');
             }
         }
@@ -667,9 +787,10 @@ async function init() {
             if (narrativeState.timeline.length === 0) {
                 timelineListEl.innerHTML = '<div class="timeline-entry"><span class="timeline-text">No scene or fork events yet.</span></div>';
             } else {
-                timelineListEl.innerHTML = narrativeState.timeline.map((entry, index) => (
-                    `<div class="timeline-entry" data-type="${escapeHtml(entry.type)}"><button class="timeline-entry-btn" data-index="${index}" data-selected="${index === narrativeState.selectedTimelineIndex ? 'true' : 'false'}"><span class="timeline-time">${escapeHtml(formatClockLabel(entry.timestamp_ms))}</span><span class="timeline-type">${escapeHtml(entry.type)}</span><span class="timeline-text">${escapeHtml(entry.text)}</span></button></div>`
-                )).join('');
+                timelineListEl.innerHTML = narrativeState.timeline.map((entry, index) => {
+                    const eventState = enrichTimelineEvent(entry);
+                    return `<div class="timeline-entry" data-type="${escapeHtml(entry.type)}"><button class="timeline-entry-btn" data-index="${index}" data-selected="${index === narrativeState.selectedTimelineIndex ? 'true' : 'false'}"><span class="timeline-time">${escapeHtml(formatClockLabel(entry.timestamp_ms))}</span><span class="timeline-type">${escapeHtml(entry.type)}</span><span class="timeline-text">${escapeHtml(entry.text)}</span><span class="timeline-path">${buildTimelinePathHtml(entry, eventState, compareState.focusBranchId)}</span></button></div>`;
+                }).join('');
             }
         }
     }

@@ -155,6 +155,82 @@
             flex: 1;
         }
 
+        .fork-inspect-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .fork-inspect-card {
+            padding: 8px;
+            border: 1px solid rgba(200, 200, 200, 0.08);
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .fork-inspect-card[data-role="focus"] {
+            border-color: rgba(0, 200, 255, 0.18);
+            background: rgba(0, 200, 255, 0.06);
+        }
+
+        .fork-inspect-label {
+            color: #7c97a1;
+            font-size: 10px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+        }
+
+        .fork-inspect-value {
+            color: #e2f1f5;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        #kp-delta-summary,
+        #kp-critical-point {
+            margin-top: 8px;
+            font-size: 11px;
+            line-height: 1.5;
+            color: #a9b8be;
+        }
+
+        #kp-branch-path {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 8px;
+        }
+
+        .branch-path-node,
+        .branch-path-edge {
+            font-size: 10px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .branch-path-node {
+            padding: 4px 6px;
+            border: 1px solid rgba(200, 200, 200, 0.12);
+            background: rgba(255, 255, 255, 0.04);
+            color: #d7e8ed;
+        }
+
+        .branch-path-node[data-role="focus"] {
+            border-color: rgba(0, 200, 255, 0.2);
+            background: rgba(0, 200, 255, 0.08);
+        }
+
+        .branch-path-node[data-role="critical"] {
+            border-color: rgba(255, 200, 0, 0.24);
+            color: #ffd77a;
+        }
+
+        .branch-path-edge {
+            color: #76919a;
+        }
+
         #kp-hidden-context-detail {
             margin-top: 8px;
             font-size: 11px;
@@ -218,6 +294,43 @@
         .timeline-entry-btn[data-selected="true"] {
             background: rgba(0, 200, 255, 0.08);
             border-color: rgba(0, 200, 255, 0.24);
+        }
+
+        .timeline-path {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 4px;
+            margin-top: 6px;
+        }
+
+        .timeline-chip {
+            padding: 2px 5px;
+            border: 1px solid rgba(200, 200, 200, 0.12);
+            background: rgba(255, 255, 255, 0.04);
+            color: #b7cbd2;
+            font-size: 10px;
+            letter-spacing: 0.8px;
+            text-transform: uppercase;
+        }
+
+        .timeline-chip[data-kind="focus"] {
+            border-color: rgba(0, 200, 255, 0.24);
+            color: #d8f7ff;
+        }
+
+        .timeline-chip[data-kind="critical"] {
+            border-color: rgba(255, 200, 0, 0.24);
+            color: #ffd77a;
+        }
+
+        .timeline-chip[data-kind="delta"] {
+            color: #9cc7d2;
+        }
+
+        .timeline-path-edge {
+            color: #6d828a;
+            font-size: 10px;
         }
 
         .timeline-time {
@@ -536,10 +649,25 @@
     <div id="kp-panel-timeline" class="panel">
         <div class="panel-label">TIMELINE</div>
         <div id="kp-branch-compare" class="narrative-block">
-            <div class="narrative-row"><span class="narrative-key">focus</span><span class="narrative-value">b0</span></div>
-            <div class="narrative-row"><span class="narrative-key">base</span><span class="narrative-value">0.0000</span></div>
-            <div class="narrative-row"><span class="narrative-key">delta</span><span class="narrative-value">0.0000</span></div>
-            <div class="narrative-row"><span class="narrative-key">drift</span><span id="kp-drift-indicator" class="narrative-value" data-level="stable">stable</span></div>
+            <div id="kp-branch-compare-rows">
+                <div class="narrative-row"><span class="narrative-key">focus</span><span class="narrative-value">b0</span></div>
+                <div class="narrative-row"><span class="narrative-key">base</span><span class="narrative-value">0.0000</span></div>
+                <div class="narrative-row"><span class="narrative-key">delta</span><span class="narrative-value">0.0000</span></div>
+                <div class="narrative-row"><span class="narrative-key">drift</span><span id="kp-drift-indicator" class="narrative-value" data-level="stable">stable</span></div>
+            </div>
+            <div id="kp-fork-inspect-grid" class="fork-inspect-grid">
+                <div class="fork-inspect-card" data-role="base">
+                    <div class="fork-inspect-label">Base</div>
+                    <div id="kp-base-branch-card" class="fork-inspect-value">b0 stable</div>
+                </div>
+                <div class="fork-inspect-card" data-role="focus">
+                    <div class="fork-inspect-label">Focus</div>
+                    <div id="kp-focus-branch-card" class="fork-inspect-value">b0 aligned</div>
+                </div>
+            </div>
+            <div id="kp-delta-summary">No divergence yet.</div>
+            <div id="kp-critical-point">Critical point not established.</div>
+            <div id="kp-branch-path"></div>
         </div>
         <div class="narrative-block">
             <div class="narrative-row"><span class="narrative-key">divergence</span><span id="kp-divergence-value" class="narrative-value">0.60</span></div>
