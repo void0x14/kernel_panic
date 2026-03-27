@@ -573,7 +573,11 @@
 
     function getAudioElements() {
         return {
-            fileInput: document.getElementById('kp-audio-file'),
+            fileInput: document.getElementById('kp-unified-file'),
+            modeSelect: document.getElementById('kp-input-mode'),
+            textArea: document.getElementById('kp-memory-text'),
+            injectBtn: document.getElementById('kp-inject'),
+            dropzone: document.getElementById('kp-dropzone'),
             recordBtn: document.getElementById('kp-audio-record'),
             stopBtn: document.getElementById('kp-audio-stop'),
             submitBtn: document.getElementById('kp-audio-submit'),
@@ -600,16 +604,43 @@
 
     function syncAudioUi() {
         const elements = getAudioElements();
-        if (!elements.status) return;
+        if (!elements.status || !elements.modeSelect || !elements.textArea || !elements.injectBtn) return;
 
         const hasPreview = Boolean(audioState.blob && audioState.preview_url);
-        elements.recordBtn.disabled = audioState.mode === 'recording';
+        const inputMode = elements.modeSelect.value || 'auto';
+        const textVisible = inputMode === 'auto' || inputMode === 'text';
+        const audioVisible = inputMode === 'auto' || inputMode === 'audio_file' || inputMode === 'live_audio';
+        const recordVisible = inputMode === 'auto' || inputMode === 'live_audio';
+
+        elements.textArea.hidden = !textVisible;
+        elements.injectBtn.hidden = !textVisible;
+        elements.recordBtn.hidden = !audioVisible;
+        elements.stopBtn.hidden = !audioVisible;
+        elements.submitBtn.hidden = !audioVisible;
+        elements.resetBtn.hidden = !audioVisible;
+        elements.recordBtn.disabled = !recordVisible || audioState.mode === 'recording';
         elements.stopBtn.disabled = audioState.mode !== 'recording';
         elements.submitBtn.disabled = !hasPreview || audioState.mode === 'recording';
         elements.resetBtn.disabled = audioState.mode === 'idle' && !hasPreview && !audioState.error;
 
+        if (elements.dropzone) {
+            if (inputMode === 'text') {
+                elements.dropzone.textContent = 'Text mode active. Write a memory or switch mode to attach a file.';
+            } else if (inputMode === 'audio_file') {
+                elements.dropzone.textContent = 'Audio file mode. Drop/select an audio file, review playback, then submit manually.';
+            } else if (inputMode === 'live_audio') {
+                elements.dropzone.textContent = 'Live audio mode. Start recording, stop to preview, then submit manually.';
+            } else if (inputMode === 'chatgpt_json') {
+                elements.dropzone.textContent = 'ChatGPT JSON mode. Drop/select a ChatGPT export file to import it.';
+            } else if (inputMode === 'gemini_json') {
+                elements.dropzone.textContent = 'Gemini JSON mode. Drop/select a Gemini export file to import it.';
+            } else {
+                elements.dropzone.textContent = 'Auto mode detects audio and JSON imports. Image/video slots will attach here next.';
+            }
+        }
+
         if (elements.preview) {
-            if (hasPreview) {
+            if (hasPreview && audioVisible) {
                 elements.preview.hidden = false;
                 elements.preview.src = audioState.preview_url;
             } else {
@@ -771,15 +802,97 @@
         };
     }
 
+    function getSelectedInputMode() {
+        const elements = getAudioElements();
+        return elements.modeSelect && elements.modeSelect.value ? elements.modeSelect.value : 'auto';
+    }
+
+    function isAudioFile(file) {
+        return Boolean(file && typeof file.type === 'string' && file.type.startsWith('audio/'));
+    }
+
+    function isJsonFile(file) {
+        return Boolean(file && typeof file.name === 'string' && file.name.toLowerCase().endsWith('.json'));
+    }
+
+    function inferJsonImportKind(jsonStr, fileName) {
+        const normalizedName = typeof fileName === 'string' ? fileName.toLowerCase() : '';
+        if (normalizedName.includes('gemini')) return 'gemini_json';
+        if (normalizedName.includes('chatgpt') || normalizedName.includes('openai')) return 'chatgpt_json';
+
+        try {
+            const data = JSON.parse(jsonStr);
+            if (Array.isArray(data) && data.some((item) => item && item.mapping)) {
+                return 'chatgpt_json';
+            }
+            if (data && Array.isArray(data.conversations)) {
+                return 'chatgpt_json';
+            }
+        } catch (_error) {
+            return 'unknown_json';
+        }
+
+        return 'gemini_json';
+    }
+
+    async function readFileAsText(file) {
+        return await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (event) => resolve(typeof event.target.result === 'string' ? event.target.result : '');
+            reader.onerror = () => reject(reader.error || new Error('File read failed.'));
+            reader.readAsText(file);
+        });
+    }
+
+    async function handleUnifiedFile(file, forcedMode) {
+        if (!file) return;
+
+        const selectedMode = forcedMode || getSelectedInputMode();
+
+        if (selectedMode === 'audio_file' || (selectedMode === 'auto' && isAudioFile(file))) {
+            handleAudioFile(file);
+            return;
+        }
+
+        if (selectedMode === 'chatgpt_json' || selectedMode === 'gemini_json' || (selectedMode === 'auto' && isJsonFile(file))) {
+            const jsonStr = await readFileAsText(file);
+            const importKind = selectedMode === 'auto' ? inferJsonImportKind(jsonStr, file.name) : selectedMode;
+            if (importKind === 'chatgpt_json') {
+                parseChatGPT(jsonStr);
+                return;
+            }
+            if (importKind === 'gemini_json') {
+                parseGemini(jsonStr);
+                return;
+            }
+            failAudioState('JSON import type could not be detected.');
+            return;
+        }
+
+        if (selectedMode === 'auto') {
+            failAudioState('Unsupported file type for auto mode.');
+            return;
+        }
+
+        failAudioState(`Selected mode ${selectedMode} is not ready for this file yet.`);
+    }
+
+    function setDropzoneActive(isActive) {
+        const elements = getAudioElements();
+        if (elements.dropzone) {
+            elements.dropzone.dataset.active = isActive ? 'true' : 'false';
+        }
+    }
+
     // ============================================================
     // UI BINDINGS — called after DOM ready
     // ============================================================
     function bindUI() {
         const injectBtn = document.getElementById('kp-inject');
         const textArea = document.getElementById('kp-memory-text');
-        const chatgptInput = document.getElementById('kp-chatgpt-file');
-        const geminiInput = document.getElementById('kp-gemini-file');
-        const audioFileInput = document.getElementById('kp-audio-file');
+        const inputMode = document.getElementById('kp-input-mode');
+        const unifiedFileInput = document.getElementById('kp-unified-file');
+        const dropzone = document.getElementById('kp-dropzone');
         const audioRecordBtn = document.getElementById('kp-audio-record');
         const audioStopBtn = document.getElementById('kp-audio-stop');
         const audioSubmitBtn = document.getElementById('kp-audio-submit');
@@ -801,33 +914,37 @@
             });
         }
 
-        if (chatgptInput) {
-            chatgptInput.addEventListener('change', (e) => {
-                const file = e.target.files[0];
-                if (!file) return;
-                const reader = new FileReader();
-                reader.onload = (ev) => parseChatGPT(ev.target.result);
-                reader.readAsText(file);
-                chatgptInput.value = '';
+        if (inputMode) {
+            inputMode.addEventListener('change', () => {
+                syncAudioUi();
             });
         }
 
-        if (geminiInput) {
-            geminiInput.addEventListener('change', (e) => {
+        if (unifiedFileInput) {
+            unifiedFileInput.addEventListener('change', async (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
-                const reader = new FileReader();
-                reader.onload = (ev) => parseGemini(ev.target.result);
-                reader.readAsText(file);
-                geminiInput.value = '';
+                await handleUnifiedFile(file);
+                unifiedFileInput.value = '';
             });
         }
 
-        if (audioFileInput) {
-            audioFileInput.addEventListener('change', (e) => {
-                const file = e.target.files[0];
+        if (dropzone) {
+            dropzone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                setDropzoneActive(true);
+            });
+
+            dropzone.addEventListener('dragleave', () => {
+                setDropzoneActive(false);
+            });
+
+            dropzone.addEventListener('drop', async (e) => {
+                e.preventDefault();
+                setDropzoneActive(false);
+                const file = e.dataTransfer && e.dataTransfer.files ? e.dataTransfer.files[0] : null;
                 if (!file) return;
-                handleAudioFile(file);
+                await handleUnifiedFile(file);
             });
         }
 

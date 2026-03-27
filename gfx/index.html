@@ -77,11 +77,48 @@
             50% { opacity: 0.4; }
         }
 
-        /* Bottom-left: text input */
-        #kp-panel-text {
+        #kp-panel-input {
             bottom: 12px;
             left: 12px;
-            width: 380px;
+            width: 520px;
+        }
+
+        .input-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        #kp-input-mode {
+            min-width: 140px;
+            padding: 6px 8px;
+            background: rgba(0, 0, 0, 0.6);
+            border: 1px solid rgba(200, 200, 200, 0.2);
+            color: #C8C8C8;
+            font-family: monospace;
+            font-size: 11px;
+            text-transform: uppercase;
+            outline: none;
+        }
+
+        #kp-input-mode:focus {
+            border-color: #00C8FF;
+        }
+
+        #kp-dropzone {
+            margin-top: 8px;
+            padding: 10px 12px;
+            border: 1px dashed rgba(200, 200, 200, 0.2);
+            color: #8ea4ad;
+            font-size: 11px;
+            line-height: 1.4;
+        }
+
+        #kp-dropzone[data-active="true"] {
+            border-color: #00C8FF;
+            background: rgba(0, 200, 255, 0.08);
+            color: #C8C8C8;
         }
 
         #kp-memory-text {
@@ -120,12 +157,6 @@
             font-size: 10px;
             color: #666;
             margin-top: 4px;
-        }
-
-        #kp-panel-audio {
-            bottom: 124px;
-            right: 12px;
-            width: 320px;
         }
 
         .audio-controls {
@@ -170,15 +201,8 @@
             line-height: 1.4;
         }
 
-        /* Bottom-right: file inputs */
-        #kp-panel-files {
-            bottom: 12px;
-            right: 12px;
-            width: 240px;
-        }
-
         .file-input-group {
-            margin-bottom: 8px;
+            margin-top: 8px;
         }
 
         .file-btn {
@@ -238,20 +262,24 @@
         </div>
     </div>
 
-    <!-- Bottom-left: Free text input -->
-    <div id="kp-panel-text" class="panel">
-        <div class="panel-label">ENTER MEMORY</div>
+    <div id="kp-panel-input" class="panel">
+        <div class="panel-label">MEMORY INPUT</div>
+        <div class="input-toolbar">
+            <select id="kp-input-mode">
+                <option value="auto">AUTO</option>
+                <option value="text">TEXT</option>
+                <option value="audio_file">AUDIO FILE</option>
+                <option value="live_audio">LIVE AUDIO</option>
+                <option value="chatgpt_json">CHATGPT JSON</option>
+                <option value="gemini_json">GEMINI JSON</option>
+            </select>
+            <label class="file-btn" for="kp-unified-file">ADD FILE</label>
+            <input id="kp-unified-file" class="file-input-hidden" type="file" accept="audio/*,image/*,video/*,.json">
+        </div>
+        <div id="kp-dropzone">Drop a file here or choose one. Auto mode detects audio and JSON imports; image/video slots will attach here next.</div>
         <textarea id="kp-memory-text" placeholder="Anını yaz... (örn: 2019 yaz Istanbul arkadaşımla tartıştım çok sinirliydim)"></textarea>
         <button id="kp-inject">INJECT</button>
         <div class="inject-hint">Ctrl+Enter to inject</div>
-    </div>
-
-    <div id="kp-panel-audio" class="panel">
-        <div class="panel-label">AUDIO PREVIEW</div>
-        <div class="file-input-group">
-            <label class="file-btn" for="kp-audio-file">LOAD AUDIO FILE</label>
-            <input id="kp-audio-file" class="file-input-hidden" type="file" accept="audio/*">
-        </div>
         <div class="audio-controls">
             <button id="kp-audio-record" class="audio-btn">START REC</button>
             <button id="kp-audio-stop" class="audio-btn" disabled>STOP</button>
@@ -260,19 +288,6 @@
         </div>
         <audio id="kp-audio-preview" controls hidden></audio>
         <div id="kp-audio-status" class="audio-status">Idle. Load a file or record audio, preview it, then submit manually.</div>
-    </div>
-
-    <!-- Bottom-right: File inputs -->
-    <div id="kp-panel-files" class="panel">
-        <div class="panel-label">IMPORT HISTORY</div>
-        <div class="file-input-group">
-            <label class="file-btn" for="kp-chatgpt-file">LOAD CHATGPT EXPORT</label>
-            <input id="kp-chatgpt-file" class="file-input-hidden" type="file" accept=".json">
-        </div>
-        <div class="file-input-group">
-            <label class="file-btn" for="kp-gemini-file">LOAD GEMINI EXPORT</label>
-            <input id="kp-gemini-file" class="file-input-hidden" type="file" accept=".json">
-        </div>
     </div>
 
     <script src="gfx.js"></script>
