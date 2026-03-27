@@ -8,6 +8,9 @@ const LLM_CONFIG = {
     temperature: 0.1,
 };
 
+const LOCATION_LABELS = ['home', 'office', 'school', 'hospital', 'station', 'airport', 'library', 'cafe', 'park', 'forest', 'beach', 'unknown'];
+const ATMOSPHERE_LABELS = ['tense', 'calm', 'melancholic', 'euphoric', 'neutral'];
+
 function getEndpointUrl() {
     return LLM_CONFIG.baseUrl + LLM_CONFIG.chatEndpoint;
 }
@@ -16,7 +19,16 @@ function buildMessages(text) {
     return [
         {
             role: 'system',
-            content: 'Return ONLY valid JSON. No explanation. No markdown. No extra text.',
+            content: [
+                'Return ONLY valid JSON. No explanation. No markdown. No extra text.',
+                'Use only the exact schema keys requested.',
+                'location must be one of: ' + LOCATION_LABELS.join(', '),
+                'atmosphere must be one of: ' + ATMOSPHERE_LABELS.join(', '),
+                'Do not return free-form location text.',
+                'Do not return values like "beach in Antalya at sunset" for location.',
+                'If the location is unclear, return "unknown".',
+                'If the atmosphere is unclear, return "neutral".',
+            ].join('\n'),
         },
         {
             role: 'user',
@@ -24,7 +36,13 @@ function buildMessages(text) {
                 'Analyze this memory and return SceneData JSON.',
                 '',
                 'Fields:',
-                '{"location":"string","time_of_day":"morning|afternoon|evening|night","weather":"clear|overcast|rain|fog","atmosphere":"tense|calm|melancholic|euphoric|neutral","emotion_valence":-1.0 to 1.0,"emotion_intensity":0.0 to 1.0,"persons":["string"],"hidden_context_candidates":["string"]}',
+                '{"location":"home|office|school|hospital|station|airport|library|cafe|park|forest|beach|unknown","time_of_day":"morning|afternoon|evening|night","weather":"clear|overcast|rain|fog","atmosphere":"tense|calm|melancholic|euphoric|neutral","emotion_valence":-1.0 to 1.0,"emotion_intensity":0.0 to 1.0,"persons":["string"],"hidden_context_candidates":["string"]}',
+                '',
+                'Rules:',
+                '- location must be a canonical label only',
+                '- atmosphere must be a canonical label only',
+                '- never put descriptive phrases into location',
+                '- put scene details into hidden_context_candidates if needed',
                 '',
                 'Memory:',
                 text,
