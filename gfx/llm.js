@@ -44,6 +44,10 @@ function buildBody(text) {
 
 function extractJsonObject(responseText) {
     let cleaned = responseText;
+    
+    // Strip entire <think>...</think> blocks because reasoning traces often contain curly braces
+    cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, '');
+    
     cleaned = cleaned.replace(/```json\s*/gi, '');
     cleaned = cleaned.replace(/```\s*/g, '');
 
