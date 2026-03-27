@@ -553,6 +553,224 @@
         console.log(`[Gemini] Queued ${eventIndex} events`);
     }
 
+    function createAudioState() {
+        return {
+            mode: 'idle',
+            source_type: null,
+            file_name: '',
+            mime_type: '',
+            preview_url: '',
+            blob: null,
+            stream: null,
+            recorder: null,
+            chunks: [],
+            error: '',
+            submitted: false,
+        };
+    }
+
+    const audioState = createAudioState();
+
+    function getAudioElements() {
+        return {
+            fileInput: document.getElementById('kp-audio-file'),
+            recordBtn: document.getElementById('kp-audio-record'),
+            stopBtn: document.getElementById('kp-audio-stop'),
+            submitBtn: document.getElementById('kp-audio-submit'),
+            resetBtn: document.getElementById('kp-audio-reset'),
+            preview: document.getElementById('kp-audio-preview'),
+            status: document.getElementById('kp-audio-status'),
+        };
+    }
+
+    function revokeAudioPreviewUrl() {
+        if (audioState.preview_url) {
+            URL.revokeObjectURL(audioState.preview_url);
+            audioState.preview_url = '';
+        }
+    }
+
+    function stopAudioStreamTracks() {
+        if (!audioState.stream || typeof audioState.stream.getTracks !== 'function') return;
+        for (const track of audioState.stream.getTracks()) {
+            track.stop();
+        }
+        audioState.stream = null;
+    }
+
+    function syncAudioUi() {
+        const elements = getAudioElements();
+        if (!elements.status) return;
+
+        const hasPreview = Boolean(audioState.blob && audioState.preview_url);
+        elements.recordBtn.disabled = audioState.mode === 'recording';
+        elements.stopBtn.disabled = audioState.mode !== 'recording';
+        elements.submitBtn.disabled = !hasPreview || audioState.mode === 'recording';
+        elements.resetBtn.disabled = audioState.mode === 'idle' && !hasPreview && !audioState.error;
+
+        if (elements.preview) {
+            if (hasPreview) {
+                elements.preview.hidden = false;
+                elements.preview.src = audioState.preview_url;
+            } else {
+                elements.preview.hidden = true;
+                elements.preview.removeAttribute('src');
+                elements.preview.load();
+            }
+        }
+
+        let statusText = 'Idle. Load a file or record audio, preview it, then submit manually.';
+        if (audioState.error) {
+            statusText = `Error: ${audioState.error}`;
+        } else if (audioState.mode === 'recording') {
+            statusText = 'Recording live audio. Stop recording to create a preview.';
+        } else if (audioState.mode === 'preview_ready') {
+            statusText = `Preview ready (${audioState.source_type === 'live_audio' ? 'live recording' : 'audio file'}). Review playback, then submit manually.`;
+        } else if (audioState.mode === 'submitted') {
+            statusText = `Submitted ${audioState.source_type === 'live_audio' ? 'live recording' : 'audio file'} for later processing.`;
+        }
+
+        elements.status.textContent = statusText;
+    }
+
+    function setAudioPreview(blob, sourceType, fileName) {
+        revokeAudioPreviewUrl();
+        audioState.blob = blob;
+        audioState.source_type = sourceType;
+        audioState.file_name = fileName || '';
+        audioState.mime_type = blob && blob.type ? blob.type : '';
+        audioState.preview_url = URL.createObjectURL(blob);
+        audioState.mode = 'preview_ready';
+        audioState.error = '';
+        audioState.submitted = false;
+        syncAudioUi();
+    }
+
+    function resetAudioState() {
+        revokeAudioPreviewUrl();
+        stopAudioStreamTracks();
+        audioState.mode = 'idle';
+        audioState.source_type = null;
+        audioState.file_name = '';
+        audioState.mime_type = '';
+        audioState.blob = null;
+        audioState.recorder = null;
+        audioState.chunks = [];
+        audioState.error = '';
+        audioState.submitted = false;
+
+        const elements = getAudioElements();
+        if (elements.fileInput) {
+            elements.fileInput.value = '';
+        }
+
+        syncAudioUi();
+    }
+
+    function failAudioState(message) {
+        stopAudioStreamTracks();
+        audioState.mode = 'idle';
+        audioState.recorder = null;
+        audioState.chunks = [];
+        audioState.error = message;
+        syncAudioUi();
+    }
+
+    function handleAudioFile(file) {
+        if (!file) return;
+        setAudioPreview(file, 'audio_file', file.name || 'audio-file');
+    }
+
+    async function startAudioRecording() {
+        if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+            failAudioState('Audio recording is unavailable in this browser.');
+            return;
+        }
+
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const recorder = new MediaRecorder(stream);
+            audioState.mode = 'recording';
+            audioState.source_type = 'live_audio';
+            audioState.stream = stream;
+            audioState.recorder = recorder;
+            audioState.chunks = [];
+            audioState.error = '';
+            audioState.submitted = false;
+
+            recorder.ondataavailable = (event) => {
+                if (event.data && event.data.size > 0) {
+                    audioState.chunks.push(event.data);
+                }
+            };
+
+            recorder.onerror = (event) => {
+                const message = event.error && event.error.message ? event.error.message : 'Recording failed.';
+                failAudioState(message);
+            };
+
+            recorder.onstop = () => {
+                const blob = new Blob(audioState.chunks, { type: recorder.mimeType || 'audio/webm' });
+                audioState.recorder = null;
+                audioState.chunks = [];
+                stopAudioStreamTracks();
+                if (blob.size === 0) {
+                    failAudioState('No audio data was captured.');
+                    return;
+                }
+                setAudioPreview(blob, 'live_audio', 'live-recording.webm');
+            };
+
+            recorder.start();
+            syncAudioUi();
+        } catch (error) {
+            failAudioState(error && error.message ? error.message : 'Microphone access failed.');
+        }
+    }
+
+    function stopAudioRecording() {
+        if (audioState.recorder && audioState.recorder.state !== 'inactive') {
+            audioState.recorder.stop();
+        }
+    }
+
+    function submitAudioPreview() {
+        if (!audioState.blob) return null;
+
+        const submission = {
+            source_type: audioState.source_type,
+            file_name: audioState.file_name,
+            mime_type: audioState.mime_type,
+            size_bytes: audioState.blob.size,
+            submitted_at_ms: Date.now(),
+            blob: audioState.blob,
+        };
+
+        window._kpAudioLastSubmission = submission;
+        audioState.mode = 'submitted';
+        audioState.error = '';
+        audioState.submitted = true;
+        syncAudioUi();
+        console.log('[AUDIO] Preview submitted for later processing', {
+            source_type: submission.source_type,
+            file_name: submission.file_name,
+            size_bytes: submission.size_bytes,
+        });
+        return submission;
+    }
+
+    function getAudioStateSnapshot() {
+        return {
+            mode: audioState.mode,
+            source_type: audioState.source_type,
+            file_name: audioState.file_name,
+            mime_type: audioState.mime_type,
+            has_preview: Boolean(audioState.blob && audioState.preview_url),
+            submitted: audioState.submitted,
+            error: audioState.error,
+        };
+    }
+
     // ============================================================
     // UI BINDINGS — called after DOM ready
     // ============================================================
@@ -561,6 +779,11 @@
         const textArea = document.getElementById('kp-memory-text');
         const chatgptInput = document.getElementById('kp-chatgpt-file');
         const geminiInput = document.getElementById('kp-gemini-file');
+        const audioFileInput = document.getElementById('kp-audio-file');
+        const audioRecordBtn = document.getElementById('kp-audio-record');
+        const audioStopBtn = document.getElementById('kp-audio-stop');
+        const audioSubmitBtn = document.getElementById('kp-audio-submit');
+        const audioResetBtn = document.getElementById('kp-audio-reset');
 
         if (injectBtn && textArea) {
             injectBtn.addEventListener('click', async () => {
@@ -599,6 +822,40 @@
                 geminiInput.value = '';
             });
         }
+
+        if (audioFileInput) {
+            audioFileInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                handleAudioFile(file);
+            });
+        }
+
+        if (audioRecordBtn) {
+            audioRecordBtn.addEventListener('click', async () => {
+                await startAudioRecording();
+            });
+        }
+
+        if (audioStopBtn) {
+            audioStopBtn.addEventListener('click', () => {
+                stopAudioRecording();
+            });
+        }
+
+        if (audioSubmitBtn) {
+            audioSubmitBtn.addEventListener('click', () => {
+                submitAudioPreview();
+            });
+        }
+
+        if (audioResetBtn) {
+            audioResetBtn.addEventListener('click', () => {
+                resetAudioState();
+            });
+        }
+
+        syncAudioUi();
     }
 
     // Expose globally for gfx.js integration
@@ -611,6 +868,13 @@
         buildSceneData,
         scoreEmotion,
         extractLocation,
+        audioInput: {
+            getState: getAudioStateSnapshot,
+            startRecording: startAudioRecording,
+            stopRecording: stopAudioRecording,
+            submitPreview: submitAudioPreview,
+            reset: resetAudioState,
+        },
     };
 
     // Bind on DOM ready

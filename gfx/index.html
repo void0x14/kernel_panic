@@ -122,6 +122,54 @@
             margin-top: 4px;
         }
 
+        #kp-panel-audio {
+            bottom: 124px;
+            right: 12px;
+            width: 320px;
+        }
+
+        .audio-controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 8px;
+        }
+
+        .audio-btn {
+            padding: 6px 12px;
+            background: rgba(0, 200, 255, 0.1);
+            border: 1px solid rgba(200, 200, 200, 0.2);
+            color: #C8C8C8;
+            font-family: monospace;
+            font-size: 11px;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .audio-btn:hover:not(:disabled) {
+            background: rgba(0, 200, 255, 0.25);
+            border-color: #00C8FF;
+        }
+
+        .audio-btn:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+
+        #kp-audio-preview {
+            width: 100%;
+            margin-top: 8px;
+        }
+
+        .audio-status {
+            margin-top: 8px;
+            font-size: 11px;
+            color: #8ea4ad;
+            min-height: 28px;
+            line-height: 1.4;
+        }
+
         /* Bottom-right: file inputs */
         #kp-panel-files {
             bottom: 12px;
@@ -196,6 +244,22 @@
         <textarea id="kp-memory-text" placeholder="Anını yaz... (örn: 2019 yaz Istanbul arkadaşımla tartıştım çok sinirliydim)"></textarea>
         <button id="kp-inject">INJECT</button>
         <div class="inject-hint">Ctrl+Enter to inject</div>
+    </div>
+
+    <div id="kp-panel-audio" class="panel">
+        <div class="panel-label">AUDIO PREVIEW</div>
+        <div class="file-input-group">
+            <label class="file-btn" for="kp-audio-file">LOAD AUDIO FILE</label>
+            <input id="kp-audio-file" class="file-input-hidden" type="file" accept="audio/*">
+        </div>
+        <div class="audio-controls">
+            <button id="kp-audio-record" class="audio-btn">START REC</button>
+            <button id="kp-audio-stop" class="audio-btn" disabled>STOP</button>
+            <button id="kp-audio-submit" class="audio-btn" disabled>SUBMIT</button>
+            <button id="kp-audio-reset" class="audio-btn" disabled>RESET</button>
+        </div>
+        <audio id="kp-audio-preview" controls hidden></audio>
+        <div id="kp-audio-status" class="audio-status">Idle. Load a file or record audio, preview it, then submit manually.</div>
     </div>
 
     <!-- Bottom-right: File inputs -->
