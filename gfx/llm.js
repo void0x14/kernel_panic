@@ -42,14 +42,27 @@ function buildBody(text) {
     };
 }
 
-function extractJsonObject(responseText) {
-    let cleaned = responseText;
-    
+const RELAXED_ENUM_FIELDS = {
+    time_of_day: ['morning', 'afternoon', 'evening', 'night'],
+    weather: ['clear', 'overcast', 'rain', 'fog'],
+    atmosphere: ['tense', 'calm', 'melancholic', 'euphoric', 'neutral'],
+};
+
+function cleanResponseText(responseText) {
+    let cleaned = typeof responseText === 'string' ? responseText : '';
+
     // Strip entire <think>...</think> blocks because reasoning traces often contain curly braces
     cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, '');
-    
     cleaned = cleaned.replace(/```json\s*/gi, '');
     cleaned = cleaned.replace(/```\s*/g, '');
+
+    return cleaned;
+}
+
+function parseStrictJson(cleaned) {
+    if (typeof cleaned !== 'string' || cleaned.length === 0) {
+        return null;
+    }
 
     const start = cleaned.indexOf('{');
     const end = cleaned.lastIndexOf('}');
@@ -63,6 +76,135 @@ function extractJsonObject(responseText) {
     } catch (_error) {
         return null;
     }
+}
+
+function escapeRegex(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function extractStringField(text, key) {
+    const pattern = new RegExp(
+        '["\\\']?' + escapeRegex(key) + '["\\\']?\\s*[:=]\\s*(?:"([^"]*)"|\\\'([^\\\']*)\\\'|([^,\\n\\r}]+))',
+        'i'
+    );
+    const match = text.match(pattern);
+    if (!match) return null;
+
+    const value = (match[1] || match[2] || match[3] || '').trim();
+    return value || null;
+}
+
+function extractNumberField(text, key) {
+    const pattern = new RegExp('["\\\']?' + escapeRegex(key) + '["\\\']?\\s*[:=]\\s*(-?\\d+(?:\\.\\d+)?)', 'i');
+    const match = text.match(pattern);
+    if (!match) return null;
+
+    const value = Number(match[1]);
+    return Number.isFinite(value) ? value : null;
+}
+
+function normalizeRelaxedToken(value) {
+    return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function stripWrappedQuotes(value) {
+    if (typeof value !== 'string') return '';
+    return value.trim().replace(/^['"]|['"]$/g, '').trim();
+}
+
+function extractArrayField(text, key) {
+    const bracketPattern = new RegExp('["\\\']?' + escapeRegex(key) + '["\\\']?\\s*[:=]\\s*(\\[[^\\]]*\\])', 'i');
+    const bracketMatch = text.match(bracketPattern);
+
+    if (bracketMatch) {
+        return bracketMatch[1]
+            .slice(1, -1)
+            .split(',')
+            .map((item) => stripWrappedQuotes(item))
+            .filter((item) => item.length > 0);
+    }
+
+    const singleValue = extractStringField(text, key);
+    return singleValue ? [singleValue] : [];
+}
+
+function clampNumber(value, min, max) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+    return Math.min(max, Math.max(min, value));
+}
+
+function extractEnumField(text, key) {
+    const rawValue = extractStringField(text, key);
+    if (!rawValue) return 'unknown';
+
+    const normalizedValue = normalizeRelaxedToken(rawValue);
+    const allowedValues = RELAXED_ENUM_FIELDS[key];
+    return Array.isArray(allowedValues) && allowedValues.includes(normalizedValue)
+        ? normalizedValue
+        : 'unknown';
+}
+
+function hasRelaxedValue(sceneData) {
+    return Boolean(
+        sceneData.location
+        || sceneData.time_of_day !== 'unknown'
+        || sceneData.weather !== 'unknown'
+        || sceneData.atmosphere !== 'unknown'
+        || typeof sceneData.emotion_valence === 'number'
+        || typeof sceneData.emotion_intensity === 'number'
+        || sceneData.persons.length > 0
+        || sceneData.hidden_context_candidates.length > 0
+    );
+}
+
+function parseRelaxed(responseText) {
+    const cleaned = cleanResponseText(responseText);
+    const rawLocation = extractStringField(cleaned, 'location');
+    const normalizedLocation = normalizeRelaxedToken(rawLocation);
+    const location = rawLocation && normalizedLocation !== 'unknown' ? rawLocation : null;
+    const rawValence = clampNumber(extractNumberField(cleaned, 'emotion_valence'), -1.0, 1.0);
+    const rawIntensity = clampNumber(extractNumberField(cleaned, 'emotion_intensity'), 0.0, 1.0);
+    const hasValence = typeof rawValence === 'number';
+    const hasIntensity = typeof rawIntensity === 'number';
+    const sceneData = {
+        location,
+        time_of_day: extractEnumField(cleaned, 'time_of_day'),
+        weather: extractEnumField(cleaned, 'weather'),
+        atmosphere: extractEnumField(cleaned, 'atmosphere'),
+        emotion_valence: hasValence ? rawValence : hasIntensity ? 0.0 : null,
+        emotion_intensity: hasIntensity ? rawIntensity : hasValence ? 0.25 : null,
+        persons: extractArrayField(cleaned, 'persons'),
+        hidden_context_candidates: extractArrayField(cleaned, 'hidden_context_candidates'),
+    };
+
+    return hasRelaxedValue(sceneData) ? sceneData : null;
+}
+
+function parseSceneResponse(responseText) {
+    const cleaned = cleanResponseText(responseText);
+    const strictScene = parseStrictJson(cleaned);
+
+    if (strictScene) {
+        return {
+            sceneData: strictScene,
+            parse_mode: 'strict',
+        };
+    }
+
+    const relaxedScene = parseRelaxed(cleaned);
+    if (!relaxedScene) {
+        return null;
+    }
+
+    return {
+        sceneData: relaxedScene,
+        parse_mode: 'relaxed',
+    };
+}
+
+function extractJsonObject(responseText) {
+    const parsed = parseSceneResponse(responseText);
+    return parsed ? parsed.sceneData : null;
 }
 
 async function requestCompletionDetailed(text) {
@@ -107,8 +249,8 @@ async function requestCompletionDetailed(text) {
             };
         }
 
-        const sceneData = extractJsonObject(content);
-        if (!sceneData) {
+        const parsedResponse = parseSceneResponse(content);
+        if (!parsedResponse) {
             console.warn('[LLM] No valid JSON in content');
             return {
                 status: 'invalid_json',
@@ -119,8 +261,9 @@ async function requestCompletionDetailed(text) {
 
         return {
             status: 'ok',
-            sceneData,
+            sceneData: parsedResponse.sceneData,
             content,
+            parse_mode: parsedResponse.parse_mode,
         };
     } catch (error) {
         window.clearTimeout(timeoutId);
