@@ -262,8 +262,40 @@
         return window._kpInjectToken === token;
     }
 
+    function cloneSceneData(sceneData) {
+        return {
+            source: sceneData.source || 'unknown',
+            location: sceneData.location || 'unknown',
+            time_of_day: sceneData.time_of_day || 'unknown',
+            weather: sceneData.weather || 'unknown',
+            atmosphere: sceneData.atmosphere || 'unknown',
+            emotion_valence: Number.isFinite(sceneData.emotion_valence) ? sceneData.emotion_valence : 0,
+            emotion_intensity: Number.isFinite(sceneData.emotion_intensity) ? sceneData.emotion_intensity : 0,
+            sigma: Number.isFinite(sceneData.sigma) ? sceneData.sigma : 0,
+            llm_mode: sceneData.llm_mode || '',
+            llm_status: sceneData.llm_status || '',
+            llm_latency_ms: sceneData.llm_latency_ms ?? null,
+            fallback_reason: sceneData.fallback_reason || '',
+            persons: Array.isArray(sceneData.persons) ? sceneData.persons.slice() : [],
+            hidden_context_candidates: Array.isArray(sceneData.hidden_context_candidates) ? sceneData.hidden_context_candidates.slice() : [],
+        };
+    }
+
+    function dispatchSceneUpdate(timestamp, sceneData) {
+        const eventTimestampMs = typeof timestamp === 'bigint'
+            ? Number(timestamp / 1000000n)
+            : Date.now();
+        const detail = {
+            timestamp_ms: Number.isFinite(eventTimestampMs) ? eventTimestampMs : Date.now(),
+            sceneData: cloneSceneData(sceneData),
+        };
+
+        window.dispatchEvent(new CustomEvent('kp:scene-updated', { detail }));
+    }
+
     function applySceneDataToRuntime(wasm, timestamp, sceneData) {
         window._kpSceneData = sceneData;
+        dispatchSceneUpdate(timestamp, sceneData);
 
         if (!wasm) {
             console.log(`[SIM] skip (no wasm) location="${sceneData.location}" valence=${sceneData.emotion_valence.toFixed(3)} intensity=${sceneData.emotion_intensity.toFixed(3)}`);

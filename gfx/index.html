@@ -83,6 +83,208 @@
             width: 520px;
         }
 
+        #kp-panel-timeline {
+            bottom: 12px;
+            right: 12px;
+            width: 320px;
+            max-height: 360px;
+            overflow: auto;
+        }
+
+        .narrative-block {
+            margin-bottom: 10px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid rgba(200, 200, 200, 0.08);
+        }
+
+        .narrative-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 4px;
+            font-size: 11px;
+        }
+
+        .narrative-key {
+            color: #6d828a;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .narrative-value {
+            color: #C8C8C8;
+            text-align: right;
+        }
+
+        .narrative-btn {
+            width: 100%;
+            padding: 7px 10px;
+            background: rgba(0, 200, 255, 0.08);
+            border: 1px solid rgba(0, 200, 255, 0.2);
+            color: #A9DCE7;
+            font-family: monospace;
+            font-size: 11px;
+            letter-spacing: 1.2px;
+            text-transform: uppercase;
+            cursor: pointer;
+        }
+
+        .narrative-btn:hover:not(:disabled) {
+            background: rgba(0, 200, 255, 0.16);
+            border-color: rgba(0, 200, 255, 0.4);
+        }
+
+        .narrative-btn:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+
+        .narrative-slider {
+            width: 100%;
+            margin: 6px 0 4px;
+        }
+
+        .narrative-inline {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .narrative-inline .narrative-btn {
+            width: auto;
+            flex: 1;
+        }
+
+        #kp-hidden-context-detail {
+            margin-top: 8px;
+            font-size: 11px;
+            line-height: 1.5;
+            color: #A9B8BE;
+        }
+
+        .hidden-context-list {
+            margin-top: 6px;
+        }
+
+        .hidden-context-chip {
+            display: inline-block;
+            margin: 0 6px 6px 0;
+            padding: 4px 6px;
+            border: 1px solid rgba(0, 200, 255, 0.16);
+            background: rgba(0, 200, 255, 0.08);
+            color: #D5EEF4;
+            font-size: 10px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .branch-btn {
+            display: block;
+            width: 100%;
+            margin-bottom: 4px;
+            padding: 4px 6px;
+            background: transparent;
+            border: 1px solid rgba(200, 200, 200, 0.08);
+            color: inherit;
+            font-family: monospace;
+            font-size: 11px;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .branch-btn[data-selected="true"] {
+            background: rgba(255, 255, 255, 0.06);
+            border-color: rgba(255, 255, 255, 0.22);
+        }
+
+        .timeline-entry {
+            margin-bottom: 8px;
+        }
+
+        .timeline-entry-btn {
+            display: block;
+            width: 100%;
+            padding: 6px 8px;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(200, 200, 200, 0.08);
+            color: #C8C8C8;
+            font-family: monospace;
+            font-size: 11px;
+            line-height: 1.4;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .timeline-entry-btn[data-selected="true"] {
+            background: rgba(0, 200, 255, 0.08);
+            border-color: rgba(0, 200, 255, 0.24);
+        }
+
+        .timeline-time {
+            color: #6d828a;
+            margin-right: 6px;
+        }
+
+        .timeline-type {
+            color: #00C8FF;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-right: 6px;
+        }
+
+        .timeline-entry[data-type="fork"] .timeline-type {
+            color: #FFC800;
+        }
+
+        .timeline-entry[data-type="hidden"] .timeline-type {
+            color: #6EE7F7;
+        }
+
+        .timeline-text {
+            color: #C8C8C8;
+        }
+
+        #kp-hidden-signal {
+            position: absolute;
+            left: 50%;
+            bottom: 156px;
+            transform: translateX(-50%);
+            min-width: 220px;
+            max-width: 420px;
+            padding: 10px 14px;
+            background: linear-gradient(180deg, rgba(8, 14, 18, 0.08) 0%, rgba(8, 14, 18, 0.42) 100%);
+            border: 1px solid rgba(200, 200, 200, 0.08);
+            color: rgba(230, 240, 245, 0.82);
+            font-size: 12px;
+            letter-spacing: 1.4px;
+            text-transform: uppercase;
+            text-align: center;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 180ms ease, transform 180ms ease, border-color 180ms ease;
+            z-index: 8;
+            backdrop-filter: blur(8px);
+            text-shadow: 0 0 18px rgba(0, 0, 0, 0.45);
+        }
+
+        #kp-hidden-signal[data-active="true"] {
+            opacity: 1;
+            transform: translateX(-50%) translateY(-4px);
+            border-color: rgba(0, 200, 255, 0.18);
+        }
+
+        #kp-drift-indicator[data-level="stable"] {
+            color: #97c7b8;
+        }
+
+        #kp-drift-indicator[data-level="shifting"] {
+            color: #f0ca73;
+        }
+
+        #kp-drift-indicator[data-level="split"] {
+            color: #ff8e70;
+        }
+
         .input-toolbar {
             display: flex;
             align-items: center;
@@ -294,6 +496,33 @@
         <div id="kp-media-meta" class="audio-status"></div>
         <div id="kp-audio-status" class="audio-status">Idle. Load a file or record audio, preview it, then submit manually.</div>
     </div>
+
+    <div id="kp-panel-timeline" class="panel">
+        <div class="panel-label">TIMELINE</div>
+        <div id="kp-branch-compare" class="narrative-block">
+            <div class="narrative-row"><span class="narrative-key">focus</span><span class="narrative-value">b0</span></div>
+            <div class="narrative-row"><span class="narrative-key">base</span><span class="narrative-value">0.0000</span></div>
+            <div class="narrative-row"><span class="narrative-key">delta</span><span class="narrative-value">0.0000</span></div>
+            <div class="narrative-row"><span class="narrative-key">drift</span><span id="kp-drift-indicator" class="narrative-value" data-level="stable">stable</span></div>
+        </div>
+        <div class="narrative-block">
+            <div class="narrative-row"><span class="narrative-key">divergence</span><span id="kp-divergence-value" class="narrative-value">0.60</span></div>
+            <input id="kp-divergence" class="narrative-slider" type="range" min="0" max="1" step="0.05" value="0.6">
+            <div class="narrative-inline">
+                <button id="kp-fork-now" class="narrative-btn">FORK NOW</button>
+            </div>
+        </div>
+        <button id="kp-hidden-reveal" class="narrative-btn" disabled>NO CONTEXT TO REVEAL</button>
+        <div id="kp-hidden-context-detail" hidden></div>
+        <div id="kp-selected-event" class="narrative-block">
+            <div class="timeline-entry"><span class="timeline-text">No event selected.</span></div>
+        </div>
+        <div id="kp-timeline-list">
+            <div class="timeline-entry"><span class="timeline-text">No scene or fork events yet.</span></div>
+        </div>
+    </div>
+
+    <div id="kp-hidden-signal" data-active="false">No hidden context signal.</div>
 
     <script src="gfx.js"></script>
     <script src="llm-fixtures.js?v=20260327"></script>

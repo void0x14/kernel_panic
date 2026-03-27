@@ -159,31 +159,487 @@ async function init() {
         return visualState;
     }
 
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, (char) => {
+            switch (char) {
+                case '&': return '&amp;';
+                case '<': return '&lt;';
+                case '>': return '&gt;';
+                case '"': return '&quot;';
+                case '\'': return '&#39;';
+                default: return char;
+            }
+        });
+    }
+
+    function createNarrativeState() {
+        return {
+            timeline: [],
+            hiddenSignals: [],
+            hiddenSignalIndex: 0,
+            lastCueAdvanceMs: 0,
+            lastSceneSignature: '',
+            lastHiddenSignature: '',
+            selectedBranchId: 0,
+            selectedTimelineIndex: 0,
+            hiddenRevealOpen: false,
+            divergenceCoeff: 0.6,
+            branchMetrics: {},
+        };
+    }
+
+    const narrativeState = window._kpNarrativeState && typeof window._kpNarrativeState === 'object'
+        ? window._kpNarrativeState
+        : createNarrativeState();
+    window._kpNarrativeState = narrativeState;
+    const MAX_BRANCHES = 64;
+    window._kpActiveBranchCount = window._kpActiveBranchCount || 1;
+
+    function cloneSceneSnapshot(sceneData) {
+        const nextScene = sceneData && typeof sceneData === 'object' ? sceneData : {};
+        return {
+            source: nextScene.source || 'unknown',
+            location: nextScene.location || 'unknown',
+            time_of_day: nextScene.time_of_day || 'unknown',
+            weather: nextScene.weather || 'unknown',
+            atmosphere: nextScene.atmosphere || 'unknown',
+            emotion_valence: Number.isFinite(nextScene.emotion_valence) ? nextScene.emotion_valence : 0,
+            emotion_intensity: Number.isFinite(nextScene.emotion_intensity) ? nextScene.emotion_intensity : 0,
+            sigma: Number.isFinite(nextScene.sigma) ? nextScene.sigma : 0,
+            llm_mode: nextScene.llm_mode || '',
+            llm_status: nextScene.llm_status || '',
+            llm_latency_ms: nextScene.llm_latency_ms ?? null,
+            fallback_reason: nextScene.fallback_reason || '',
+            persons: Array.isArray(nextScene.persons) ? nextScene.persons.slice() : [],
+            hidden_context_candidates: Array.isArray(nextScene.hidden_context_candidates) ? nextScene.hidden_context_candidates.slice() : [],
+        };
+    }
+
+    function formatClockLabel(timestampMs) {
+        const date = new Date(Number.isFinite(timestampMs) ? timestampMs : Date.now());
+        const parts = [date.getHours(), date.getMinutes(), date.getSeconds()]
+            .map((value) => String(value).padStart(2, '0'));
+        return parts.join(':');
+    }
+
+    function setHiddenSignals(sceneData) {
+        const signals = Array.isArray(sceneData.hidden_context_candidates)
+            ? sceneData.hidden_context_candidates.filter((item) => typeof item === 'string' && item.trim().length > 0).slice(0, 4)
+            : [];
+
+        narrativeState.hiddenSignals = signals;
+        if (narrativeState.hiddenSignalIndex >= signals.length) {
+            narrativeState.hiddenSignalIndex = 0;
+        }
+        if (signals.length <= 1) {
+            narrativeState.lastCueAdvanceMs = 0;
+        }
+    }
+
+    function summarizeScene(sceneData) {
+        const parts = [];
+        if (sceneData.location) parts.push(sceneData.location);
+        if (sceneData.time_of_day && sceneData.time_of_day !== 'unknown') parts.push(sceneData.time_of_day);
+        if (sceneData.atmosphere && sceneData.atmosphere !== 'unknown') parts.push(sceneData.atmosphere);
+        return parts.length > 0 ? parts.join(' · ') : 'scene updated';
+    }
+
+    function ensureBranchMetric(branchId) {
+        if (!narrativeState.branchMetrics[branchId]) {
+            narrativeState.branchMetrics[branchId] = {
+                currentPanic: 0,
+                maxDelta: 0,
+                criticalTick: 0,
+            };
+        }
+        return narrativeState.branchMetrics[branchId];
+    }
+
+    function updateBranchMetric(branchId, panicScore, tick) {
+        const metric = ensureBranchMetric(branchId);
+        metric.currentPanic = Number.isFinite(panicScore) ? panicScore : 0;
+        if (typeof tick === 'number' && Number.isFinite(tick)) {
+            metric.lastTick = tick;
+        }
+
+        if (branchId === 0) {
+            return metric;
+        }
+
+        const baseMetric = ensureBranchMetric(0);
+        const delta = Math.abs(metric.currentPanic - baseMetric.currentPanic);
+        if (delta >= metric.maxDelta) {
+            metric.maxDelta = delta;
+            metric.criticalTick = metric.lastTick || 0;
+        }
+        return metric;
+    }
+
+    function getTimelineEntry(index) {
+        return Number.isInteger(index) && index >= 0 && index < narrativeState.timeline.length
+            ? narrativeState.timeline[index]
+            : null;
+    }
+
+    function getSelectedSceneSnapshot() {
+        const selectedEntry = getTimelineEntry(narrativeState.selectedTimelineIndex);
+        if (selectedEntry && selectedEntry.sceneSnapshot) {
+            return selectedEntry.sceneSnapshot;
+        }
+        if (window._kpSceneData && typeof window._kpSceneData === 'object') {
+            return cloneSceneSnapshot(window._kpSceneData);
+        }
+        return null;
+    }
+
+    function getRelevantForkEntry(branchId) {
+        return narrativeState.timeline.find((entry) => (
+            entry.type === 'fork' && (
+                entry.targetBranchId === branchId
+                || entry.branchId === branchId
+            )
+        )) || narrativeState.timeline.find((entry) => entry.type === 'fork') || null;
+    }
+
+    function pushTimelineEvent(type, text, timestampMs, metadata) {
+        const event = {
+            type,
+            text,
+            timestamp_ms: Number.isFinite(timestampMs) ? timestampMs : Date.now(),
+            sceneSnapshot: metadata && metadata.sceneSnapshot ? cloneSceneSnapshot(metadata.sceneSnapshot) : null,
+            branchId: metadata && Number.isInteger(metadata.branchId) ? metadata.branchId : 0,
+            sourceBranchId: metadata && Number.isInteger(metadata.sourceBranchId) ? metadata.sourceBranchId : null,
+            targetBranchId: metadata && Number.isInteger(metadata.targetBranchId) ? metadata.targetBranchId : null,
+            divergenceCoeff: metadata && typeof metadata.divergenceCoeff === 'number' ? metadata.divergenceCoeff : null,
+        };
+        narrativeState.timeline.unshift(event);
+        narrativeState.selectedTimelineIndex = 0;
+        if (Number.isInteger(event.targetBranchId)) {
+            narrativeState.selectedBranchId = event.targetBranchId;
+        } else if (Number.isInteger(event.branchId)) {
+            narrativeState.selectedBranchId = event.branchId;
+        }
+    }
+
+    function selectBranch(branchId) {
+        if (!Number.isInteger(branchId) || branchId < 0) return;
+        narrativeState.selectedBranchId = branchId;
+        syncNarrativeUi();
+    }
+
+    function selectTimelineEntry(index) {
+        const entry = getTimelineEntry(index);
+        if (!entry) return;
+        narrativeState.selectedTimelineIndex = index;
+        if (Number.isInteger(entry.targetBranchId)) {
+            narrativeState.selectedBranchId = entry.targetBranchId;
+        } else if (Number.isInteger(entry.branchId)) {
+            narrativeState.selectedBranchId = entry.branchId;
+        }
+        setHiddenSignals(entry.sceneSnapshot || window._kpSceneData || {});
+        syncNarrativeUi();
+    }
+
+    function toggleHiddenReveal() {
+        if (narrativeState.hiddenSignals.length === 0) return;
+        narrativeState.hiddenRevealOpen = !narrativeState.hiddenRevealOpen;
+        syncNarrativeUi();
+    }
+
+    function performFork(sourceBranchId) {
+        if (!wasm) return -1;
+        const fromBranchId = Number.isInteger(sourceBranchId) ? sourceBranchId : 0;
+        if ((Number(window._kpActiveBranchCount) || 1) >= MAX_BRANCHES) return -1;
+        const coeff = clamp01(narrativeState.divergenceCoeff);
+        const newId = wasm.sim_fork(fromBranchId, coeff);
+        if (newId <= 0) return newId;
+        window._kpActiveBranchCount = newId + 1;
+        const sceneData = window._kpSceneData || {};
+        pushTimelineEvent('fork', `b${fromBranchId} -> b${newId} coeff ${coeff.toFixed(2)}`, Date.now(), {
+            sceneSnapshot: sceneData,
+            branchId: newId,
+            sourceBranchId: fromBranchId,
+            targetBranchId: newId,
+            divergenceCoeff: coeff,
+        });
+        syncNarrativeUi();
+        console.log(`Forked: new branch ${newId}, active=${window._kpActiveBranchCount}, coeff=${coeff.toFixed(2)}`);
+        return newId;
+    }
+
+    function bindNarrativeInteractions() {
+        if (narrativeState._bound) return;
+        const branchEl = document.getElementById('kp-branch-list');
+        const timelineListEl = document.getElementById('kp-timeline-list');
+        const revealBtn = document.getElementById('kp-hidden-reveal');
+        const forkBtn = document.getElementById('kp-fork-now');
+        const divergenceSlider = document.getElementById('kp-divergence');
+
+        if (branchEl) {
+            branchEl.addEventListener('click', (event) => {
+                const button = event.target.closest('.branch-btn');
+                if (!button) return;
+                selectBranch(Number(button.dataset.branchId));
+            });
+        }
+
+        if (timelineListEl) {
+            timelineListEl.addEventListener('click', (event) => {
+                const button = event.target.closest('.timeline-entry-btn');
+                if (!button) return;
+                selectTimelineEntry(Number(button.dataset.index));
+            });
+        }
+
+        if (revealBtn) {
+            revealBtn.addEventListener('click', () => {
+                toggleHiddenReveal();
+            });
+        }
+
+        if (forkBtn) {
+            forkBtn.addEventListener('click', () => {
+                performFork(0);
+            });
+        }
+
+        if (divergenceSlider) {
+            divergenceSlider.addEventListener('input', () => {
+                narrativeState.divergenceCoeff = Number(divergenceSlider.value);
+                syncNarrativeUi();
+            });
+        }
+
+        narrativeState._bound = true;
+    }
+
+    function syncNarrativeUi(nowMs) {
+        const hiddenSignalEl = document.getElementById('kp-hidden-signal');
+        const hiddenRevealBtn = document.getElementById('kp-hidden-reveal');
+        const hiddenDetailEl = document.getElementById('kp-hidden-context-detail');
+        const compareEl = document.getElementById('kp-branch-compare');
+        const selectedEventEl = document.getElementById('kp-selected-event');
+        const driftIndicatorEl = document.getElementById('kp-drift-indicator');
+        const divergenceValueEl = document.getElementById('kp-divergence-value');
+        const divergenceSlider = document.getElementById('kp-divergence');
+        const forkBtn = document.getElementById('kp-fork-now');
+        const timelineListEl = document.getElementById('kp-timeline-list');
+        const now = Number.isFinite(nowMs) ? nowMs : performance.now();
+        const branchCount = Math.max(1, Number(window._kpActiveBranchCount) || 1);
+        if (!Number.isInteger(narrativeState.selectedBranchId) || narrativeState.selectedBranchId >= branchCount) {
+            narrativeState.selectedBranchId = 0;
+        }
+
+        const selectedScene = getSelectedSceneSnapshot();
+        const selectedSignals = Array.isArray(selectedScene && selectedScene.hidden_context_candidates)
+            ? selectedScene.hidden_context_candidates.filter((item) => typeof item === 'string' && item.trim().length > 0).slice(0, 4)
+            : [];
+
+        if (hiddenSignalEl) {
+            const signals = narrativeState.hiddenSignals;
+            if (signals.length === 0) {
+                hiddenSignalEl.dataset.active = 'false';
+                hiddenSignalEl.textContent = 'No hidden context signal.';
+            } else {
+                if (signals.length > 1) {
+                    if (narrativeState.lastCueAdvanceMs === 0) {
+                        narrativeState.lastCueAdvanceMs = now;
+                    } else if (now - narrativeState.lastCueAdvanceMs > 2600) {
+                        narrativeState.hiddenSignalIndex = (narrativeState.hiddenSignalIndex + 1) % signals.length;
+                        narrativeState.lastCueAdvanceMs = now;
+                    }
+                }
+                hiddenSignalEl.dataset.active = 'true';
+                hiddenSignalEl.textContent = signals[narrativeState.hiddenSignalIndex] || signals[0];
+            }
+        }
+
+        if (divergenceValueEl) {
+            divergenceValueEl.textContent = narrativeState.divergenceCoeff.toFixed(2);
+        }
+
+        if (divergenceSlider && Number(divergenceSlider.value) !== narrativeState.divergenceCoeff) {
+            divergenceSlider.value = String(narrativeState.divergenceCoeff);
+        }
+
+        if (forkBtn) {
+            forkBtn.disabled = !wasm || branchCount >= MAX_BRANCHES;
+        }
+
+        if (compareEl) {
+            const focusBranchId = narrativeState.selectedBranchId;
+            const baseScore = wasm ? wasm.sim_panic_score(0) : 0;
+            const focusScore = wasm ? wasm.sim_panic_score(focusBranchId) : 0;
+            const forkEntry = getRelevantForkEntry(focusBranchId);
+            const focusMetric = ensureBranchMetric(focusBranchId);
+            const currentDelta = Math.abs(focusScore - baseScore);
+            compareEl.innerHTML = [
+                ['focus', `b${focusBranchId}`],
+                ['base', baseScore.toFixed(4)],
+                ['focus_score', focusScore.toFixed(4)],
+                ['delta', (focusScore - baseScore).toFixed(4)],
+                ['peak_delta', focusMetric.maxDelta.toFixed(4)],
+                ['critical_tick', String(focusMetric.criticalTick || 0)],
+                ['fork', forkEntry ? forkEntry.text : (focusBranchId === 0 ? 'root branch' : 'no fork event yet')],
+            ].map(([key, value]) => (
+                `<div class="narrative-row"><span class="narrative-key">${escapeHtml(key)}</span><span class="narrative-value">${escapeHtml(value)}</span></div>`
+            )).join('');
+
+            if (driftIndicatorEl) {
+                const level = currentDelta >= 0.5 ? 'split' : currentDelta >= 0.15 ? 'shifting' : 'stable';
+                driftIndicatorEl.dataset.level = level;
+                driftIndicatorEl.textContent = level;
+            }
+        }
+
+        if (hiddenRevealBtn) {
+            hiddenRevealBtn.disabled = selectedSignals.length === 0;
+            hiddenRevealBtn.textContent = selectedSignals.length === 0
+                ? 'NO CONTEXT TO REVEAL'
+                : (narrativeState.hiddenRevealOpen ? 'HIDE CONTEXT' : 'REVEAL CONTEXT');
+        }
+
+        if (hiddenDetailEl) {
+            if (!narrativeState.hiddenRevealOpen || selectedSignals.length === 0 || !selectedScene) {
+                hiddenDetailEl.hidden = true;
+                hiddenDetailEl.innerHTML = '';
+            } else {
+                const activeCue = selectedSignals[narrativeState.hiddenSignalIndex] || selectedSignals[0];
+                hiddenDetailEl.hidden = false;
+                hiddenDetailEl.innerHTML = [
+                    `<div><span class="narrative-key">scene</span> <span class="narrative-value">${escapeHtml(summarizeScene(selectedScene))}</span></div>`,
+                    `<div><span class="narrative-key">active</span> <span class="narrative-value">${escapeHtml(activeCue)}</span></div>`,
+                    `<div class="hidden-context-list">${selectedSignals.map((cue) => `<span class="hidden-context-chip">${escapeHtml(cue)}</span>`).join('')}</div>`,
+                ].join('');
+            }
+        }
+
+        if (selectedEventEl) {
+            const selectedEntry = getTimelineEntry(narrativeState.selectedTimelineIndex);
+            if (!selectedEntry) {
+                selectedEventEl.innerHTML = '<div class="timeline-entry"><span class="timeline-text">No event selected.</span></div>';
+            } else {
+                const sceneSnapshot = selectedEntry.sceneSnapshot;
+                const summary = sceneSnapshot ? summarizeScene(sceneSnapshot) : 'no scene snapshot';
+                const branchLabel = Number.isInteger(selectedEntry.targetBranchId)
+                    ? `b${selectedEntry.sourceBranchId} -> b${selectedEntry.targetBranchId}`
+                    : `b${selectedEntry.branchId}`;
+                const extra = [];
+                if (sceneSnapshot && sceneSnapshot.persons.length > 0) extra.push(`persons ${sceneSnapshot.persons.join(', ')}`);
+                if (sceneSnapshot && sceneSnapshot.hidden_context_candidates.length > 0) extra.push(`hidden ${sceneSnapshot.hidden_context_candidates.length}`);
+                if (typeof selectedEntry.divergenceCoeff === 'number') extra.push(`coeff ${selectedEntry.divergenceCoeff.toFixed(2)}`);
+                selectedEventEl.innerHTML = [
+                    `<div class="narrative-row"><span class="narrative-key">event</span><span class="narrative-value">${escapeHtml(selectedEntry.type)}</span></div>`,
+                    `<div class="narrative-row"><span class="narrative-key">time</span><span class="narrative-value">${escapeHtml(formatClockLabel(selectedEntry.timestamp_ms))}</span></div>`,
+                    `<div class="narrative-row"><span class="narrative-key">branch</span><span class="narrative-value">${escapeHtml(branchLabel)}</span></div>`,
+                    `<div class="narrative-row"><span class="narrative-key">summary</span><span class="narrative-value">${escapeHtml(summary)}</span></div>`,
+                    `<div class="timeline-entry"><span class="timeline-text">${escapeHtml(extra.join(' | ') || selectedEntry.text)}</span></div>`,
+                ].join('');
+            }
+        }
+
+        if (timelineListEl) {
+            if (narrativeState.timeline.length === 0) {
+                timelineListEl.innerHTML = '<div class="timeline-entry"><span class="timeline-text">No scene or fork events yet.</span></div>';
+            } else {
+                timelineListEl.innerHTML = narrativeState.timeline.map((entry, index) => (
+                    `<div class="timeline-entry" data-type="${escapeHtml(entry.type)}"><button class="timeline-entry-btn" data-index="${index}" data-selected="${index === narrativeState.selectedTimelineIndex ? 'true' : 'false'}"><span class="timeline-time">${escapeHtml(formatClockLabel(entry.timestamp_ms))}</span><span class="timeline-type">${escapeHtml(entry.type)}</span><span class="timeline-text">${escapeHtml(entry.text)}</span></button></div>`
+                )).join('');
+            }
+        }
+    }
+
+    function handleSceneNarrativeUpdate(sceneData, timestampMs) {
+        const nextScene = cloneSceneSnapshot(sceneData || {});
+        const hiddenSignature = Array.isArray(nextScene.hidden_context_candidates)
+            ? nextScene.hidden_context_candidates.join('|')
+            : '';
+        const signature = [
+            nextScene.source || '',
+            nextScene.llm_mode || '',
+            nextScene.location || '',
+            nextScene.time_of_day || '',
+            nextScene.atmosphere || '',
+            hiddenSignature,
+        ].join('::');
+
+        setHiddenSignals(nextScene);
+
+        if (signature !== narrativeState.lastSceneSignature) {
+            narrativeState.lastSceneSignature = signature;
+            pushTimelineEvent('scene', `${nextScene.source || 'scene'} ${summarizeScene(nextScene)}`, timestampMs, {
+                sceneSnapshot: nextScene,
+                branchId: 0,
+            });
+        }
+
+        if (hiddenSignature && hiddenSignature !== narrativeState.lastHiddenSignature) {
+            narrativeState.lastHiddenSignature = hiddenSignature;
+            pushTimelineEvent('hidden', `${nextScene.hidden_context_candidates[0]} surfaced`, timestampMs, {
+                sceneSnapshot: nextScene,
+                branchId: 0,
+            });
+        } else if (!hiddenSignature) {
+            narrativeState.lastHiddenSignature = '';
+        }
+
+        syncNarrativeUi();
+    }
+
+    window.addEventListener('kp:scene-updated', (event) => {
+        const detail = event.detail || {};
+        handleSceneNarrativeUpdate(detail.sceneData || window._kpSceneData || {}, detail.timestamp_ms);
+    });
+
+    if (window._kpSceneData && typeof window._kpSceneData === 'object') {
+        handleSceneNarrativeUpdate(window._kpSceneData, Date.now());
+    } else {
+        syncNarrativeUi();
+    }
+    bindNarrativeInteractions();
+
     // Derive runtime state from diagnostics
     const hasWebGPU = diag.gpu_stage === 'ok';
 
     if (!hasWebGPU || !wasm) {
         let activeBranchCount = 1;
+        window._kpActiveBranchCount = activeBranchCount;
+        window.addEventListener('keydown', (event) => {
+            if (event.code !== 'KeyF' || !wasm || activeBranchCount >= MAX_BRANCHES) return;
+            const newId = performFork(0);
+            if (newId > 0) activeBranchCount = Number(window._kpActiveBranchCount) || activeBranchCount;
+        });
         function updatePanicDisplay() {
-            if (!wasm) return;
             const panicEl = document.getElementById('kp-panic-scores');
             const branchEl = document.getElementById('kp-branch-list');
             const sceneEl = document.getElementById('kp-scene-data');
             if (!panicEl || !branchEl) return;
+            activeBranchCount = Math.max(activeBranchCount, Number(window._kpActiveBranchCount) || 1);
+
+            if (wasm) {
+                const mem = new DataView(wasm.memory.buffer);
+                for (let i = 0; i < activeBranchCount; i++) {
+                    const ptr = wasm.sim_step(i);
+                    const tick = Number(mem.getBigUint64(ptr + 20, true));
+                    updateBranchMetric(i, wasm.sim_panic_score(i), tick);
+                }
+            }
+
             let panicHtml = '';
             let branchHtml = '';
             for (let i = 0; i < activeBranchCount; i++) {
-                const score = wasm.sim_panic_score(i);
+                const score = wasm ? wasm.sim_panic_score(i) : 0;
                 const isPanic = score > 1.0;
                 const color = i === 0 ? '#FFFFFF' : i === 1 ? '#00C8FF' : i === 2 ? '#FFC800' : '#FF8000';
                 panicHtml += `<div class="${isPanic ? 'panic-alert' : ''}">b${i}: ${score.toFixed(4)}</div>`;
-                branchHtml += `<div style="color:${color}">b${i} ${isPanic ? '⚠ PANIC' : ''}</div>`;
+                branchHtml += `<button class="branch-btn" data-branch-id="${i}" data-selected="${narrativeState.selectedBranchId === i ? 'true' : 'false'}" style="color:${color}">b${i} ${isPanic ? '⚠ PANIC' : ''}</button>`;
             }
+            window._kpActiveBranchCount = activeBranchCount;
             panicEl.innerHTML = panicHtml;
             branchEl.innerHTML = branchHtml;
             if (!sceneEl) return;
             const sceneData = window._kpSceneData || {};
-            applyVisualState(sceneData, wasm.sim_panic_score(0));
+            applyVisualState(sceneData, wasm ? wasm.sim_panic_score(0) : 0);
             const sceneRows = [
                 ['source', sceneData.source ? sceneData.source.toUpperCase() : '-'],
                 ['location', sceneData.location || '-'],
@@ -199,6 +655,7 @@ async function init() {
             sceneEl.innerHTML = sceneRows.map(([key, value]) => (
                 `<div class="scene-row"><span class="scene-key">${key}</span><span class="scene-value">${value}</span></div>`
             )).join('');
+            syncNarrativeUi();
         }
         setInterval(updatePanicDisplay, 250);
         console.log('[INIT] UI-only mode (no render) - polling active');
@@ -222,6 +679,7 @@ async function init() {
 
     // Track active branch count from JS side (mirrors wasm internal state)
     let activeBranchCount = 1;
+    window._kpActiveBranchCount = activeBranchCount;
 
     // DataView for reading WASM linear memory (must be recreated on memory.growth)
     let mem = new DataView(wasm.memory.buffer);
@@ -375,7 +833,6 @@ async function init() {
     // Pre-allocate vertex buffer for MAX_BRANCHES = 64
     // Each point: [x, y, z, r, g, b] = 6 floats = 24 bytes
     // Total: 64 * 24 = 1536 bytes
-    const MAX_BRANCHES = 64;
     const vertexData = new Float32Array(MAX_BRANCHES * 6);
     const vertexBuffer = device.createBuffer({
         size: vertexData.byteLength,
@@ -448,8 +905,9 @@ async function init() {
             const scoreClass = isPanic ? 'panic-alert' : '';
             const color = i === 0 ? '#FFFFFF' : i === 1 ? '#00C8FF' : i === 2 ? '#FFC800' : '#FF8000';
             panicHtml += `<div class="${scoreClass}">b${i}: ${score.toFixed(4)}</div>`;
-            branchHtml += `<div style="color:${color}">b${i} ${isPanic ? '⚠ PANIC' : ''}</div>`;
+            branchHtml += `<button class="branch-btn" data-branch-id="${i}" data-selected="${narrativeState.selectedBranchId === i ? 'true' : 'false'}" style="color:${color}">b${i} ${isPanic ? '⚠ PANIC' : ''}</button>`;
         }
+        window._kpActiveBranchCount = activeBranchCount;
         panicEl.innerHTML = panicHtml;
         branchEl.innerHTML = branchHtml;
 
@@ -472,6 +930,7 @@ async function init() {
         sceneEl.innerHTML = sceneRows.map(([key, value]) => (
             `<div class="scene-row"><span class="scene-key">${key}</span><span class="scene-value">${value}</span></div>`
         )).join('');
+        syncNarrativeUi();
     }
 
     // ============================================================
@@ -480,15 +939,13 @@ async function init() {
     function frame() {
         // Re-read DataView if WASM memory grew (unlikely but safe)
         mem = new DataView(wasm.memory.buffer);
+        activeBranchCount = Math.max(activeBranchCount, Number(window._kpActiveBranchCount) || 1);
 
         // F key: fork from branch 0 with divergence_coeff=0.6
         // WHY branch 0: the original timeline is always the fork source
         if (keys['KeyF'] && activeBranchCount < MAX_BRANCHES) {
-            const newId = wasm.sim_fork(0, 0.6);
-            if (newId > 0) {
-                activeBranchCount = newId + 1;
-                console.log(`Forked: new branch ${newId}, active=${activeBranchCount}`);
-            }
+            const newId = performFork(0);
+            if (newId > 0) activeBranchCount = Number(window._kpActiveBranchCount) || activeBranchCount;
             keys['KeyF'] = false; // debounce: one fork per press
         }
 
@@ -524,6 +981,8 @@ async function init() {
 
             // Compute panic score for color decision
             const panicScore = wasm.sim_panic_score(i);
+            const tick = Number(mem.getBigUint64(ptr + 20, true));
+            updateBranchMetric(i, panicScore, tick);
             const [r, g, b] = getBranchColor(i, panicScore);
             const visualState = buildVisualState(window._kpSceneData || {}, wasm.sim_panic_score(0));
             const jitter = visualState.jitter_scalar * (1 + visualState.distortion_scalar) * 0.035;
