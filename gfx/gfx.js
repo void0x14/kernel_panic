@@ -268,6 +268,12 @@ async function init() {
             hiddenSignals: [],
             hiddenSignalIndex: 0,
             lastCueAdvanceMs: 0,
+            hiddenBackgroundPressure: 0,
+            hiddenBackgroundStage: 'dormant',
+            hiddenBackgroundTrace: [],
+            hiddenBackgroundCueIndex: 0,
+            lastHiddenBackgroundTickMs: 0,
+            lastHiddenSurfaceMs: 0,
             lastSceneSignature: '',
             lastHiddenSignature: '',
             selectedBranchId: 0,
@@ -320,12 +326,18 @@ async function init() {
             ? sceneData.hidden_context_candidates.filter((item) => typeof item === 'string' && item.trim().length > 0).slice(0, 4)
             : [];
 
+        const previousSignature = narrativeState.hiddenSignals.join('|');
+        const nextSignature = signals.join('|');
         narrativeState.hiddenSignals = signals;
         if (narrativeState.hiddenSignalIndex >= signals.length) {
             narrativeState.hiddenSignalIndex = 0;
         }
         if (signals.length <= 1) {
             narrativeState.lastCueAdvanceMs = 0;
+        }
+        if (previousSignature !== nextSignature) {
+            narrativeState.hiddenBackgroundCueIndex = 0;
+            narrativeState.lastHiddenSurfaceMs = 0;
         }
     }
 
@@ -457,6 +469,69 @@ async function init() {
         return chips.join('');
     }
 
+    function getUndercurrentStage(pressure) {
+        if (pressure >= 0.78) return 'surfacing';
+        if (pressure >= 0.5) return 'bleeding';
+        if (pressure >= 0.22) return 'listening';
+        return 'dormant';
+    }
+
+    function pushUndercurrentTrace(kind, text) {
+        if (typeof text !== 'string' || text.trim().length === 0) return;
+        const nextText = text.trim();
+        const previous = narrativeState.hiddenBackgroundTrace[0];
+        if (previous && previous.kind === kind && previous.text === nextText) {
+            return;
+        }
+        narrativeState.hiddenBackgroundTrace.unshift({ kind, text: nextText });
+        narrativeState.hiddenBackgroundTrace = narrativeState.hiddenBackgroundTrace.slice(0, 6);
+    }
+
+    function syncHiddenBackground(nowMs, sceneData, worldState) {
+        const now = Number.isFinite(nowMs) ? nowMs : performance.now();
+        const previousTick = narrativeState.lastHiddenBackgroundTickMs || now;
+        const dt = Math.min(1, Math.max(0, (now - previousTick) / 1000));
+        narrativeState.lastHiddenBackgroundTickMs = now;
+
+        const signals = narrativeState.hiddenSignals;
+        const targetPressure = signals.length === 0
+            ? 0
+            : clamp01(worldState.pressure * 0.78 + Math.min(0.18, signals.length * 0.05));
+        const pressure = narrativeState.hiddenBackgroundPressure;
+        const nextPressure = targetPressure >= pressure
+            ? Math.min(targetPressure, pressure + dt * 0.26)
+            : Math.max(targetPressure, pressure - dt * 0.18);
+        narrativeState.hiddenBackgroundPressure = nextPressure;
+
+        const previousStage = narrativeState.hiddenBackgroundStage;
+        const nextStage = getUndercurrentStage(nextPressure);
+        narrativeState.hiddenBackgroundStage = nextStage;
+
+        if (previousStage !== nextStage) {
+            pushUndercurrentTrace(nextStage === 'surfacing' ? 'surge' : 'ambient', `${nextStage} pressure`);
+        }
+
+        let activeCue = signals[narrativeState.hiddenBackgroundCueIndex] || signals[0] || '';
+        const canSurfaceCue = signals.length > 0 && nextStage !== 'dormant';
+        const surfaceInterval = nextStage === 'surfacing' ? 1800 : nextStage === 'bleeding' ? 2800 : 4200;
+        if (canSurfaceCue && (narrativeState.lastHiddenSurfaceMs === 0 || now - narrativeState.lastHiddenSurfaceMs >= surfaceInterval)) {
+            activeCue = signals[narrativeState.hiddenBackgroundCueIndex % signals.length];
+            narrativeState.hiddenBackgroundCueIndex = (narrativeState.hiddenBackgroundCueIndex + 1) % signals.length;
+            narrativeState.lastHiddenSurfaceMs = now;
+            pushUndercurrentTrace(nextStage === 'surfacing' ? 'surge' : 'ambient', activeCue);
+        }
+
+        return {
+            pressure: nextPressure,
+            stage: nextStage,
+            activeCue,
+            summary: signals.length === 0
+                ? 'No hidden pressure active.'
+                : `${signals.length} hidden cues are circulating beneath the scene.`,
+            trace: narrativeState.hiddenBackgroundTrace,
+        };
+    }
+
     function getTimelineEntry(index) {
         return Number.isInteger(index) && index >= 0 && index < narrativeState.timeline.length
             ? narrativeState.timeline[index]
@@ -495,6 +570,7 @@ async function init() {
             divergenceCoeff: metadata && typeof metadata.divergenceCoeff === 'number' ? metadata.divergenceCoeff : null,
         };
         narrativeState.timeline.unshift(event);
+        narrativeState.timeline = narrativeState.timeline.slice(0, 12);
         narrativeState.selectedTimelineIndex = 0;
         if (Number.isInteger(event.targetBranchId)) {
             narrativeState.selectedBranchId = event.targetBranchId;
@@ -606,6 +682,11 @@ async function init() {
         const hiddenSignalEl = document.getElementById('kp-hidden-signal');
         const hiddenRevealBtn = document.getElementById('kp-hidden-reveal');
         const hiddenDetailEl = document.getElementById('kp-hidden-context-detail');
+        const undercurrentStageEl = document.getElementById('kp-undercurrent-stage');
+        const undercurrentMeterFillEl = document.getElementById('kp-undercurrent-meter-fill');
+        const undercurrentActiveEl = document.getElementById('kp-undercurrent-active');
+        const undercurrentSummaryEl = document.getElementById('kp-undercurrent-summary');
+        const undercurrentTraceEl = document.getElementById('kp-undercurrent-trace');
         const compareRowsEl = document.getElementById('kp-branch-compare-rows');
         const baseBranchCardEl = document.getElementById('kp-base-branch-card');
         const focusBranchCardEl = document.getElementById('kp-focus-branch-card');
@@ -629,9 +710,13 @@ async function init() {
         }
 
         const selectedScene = getSelectedSceneSnapshot();
+        const liveScene = window._kpSceneData && typeof window._kpSceneData === 'object'
+            ? cloneSceneSnapshot(window._kpSceneData)
+            : (selectedScene || {});
         const selectedBranchScore = wasm ? wasm.sim_panic_score(narrativeState.selectedBranchId) : 0;
-        const worldState = computeWorldState(selectedScene || {}, selectedBranchScore, modeState);
+        const worldState = computeWorldState(liveScene || {}, selectedBranchScore, modeState);
         const compareState = buildCompareState();
+        const undercurrentState = syncHiddenBackground(now, liveScene || {}, worldState);
         const selectedSignals = Array.isArray(selectedScene && selectedScene.hidden_context_candidates)
             ? selectedScene.hidden_context_candidates.filter((item) => typeof item === 'string' && item.trim().length > 0).slice(0, 4)
             : [];
@@ -651,7 +736,35 @@ async function init() {
                     }
                 }
                 hiddenSignalEl.dataset.active = 'true';
-                hiddenSignalEl.textContent = signals[narrativeState.hiddenSignalIndex] || signals[0];
+                hiddenSignalEl.textContent = undercurrentState.activeCue || signals[narrativeState.hiddenSignalIndex] || signals[0];
+            }
+        }
+
+        if (undercurrentStageEl) {
+            undercurrentStageEl.textContent = undercurrentState.stage;
+        }
+
+        if (undercurrentMeterFillEl) {
+            undercurrentMeterFillEl.style.width = `${Math.round(undercurrentState.pressure * 100)}%`;
+        }
+
+        if (undercurrentActiveEl) {
+            undercurrentActiveEl.textContent = undercurrentState.activeCue
+                ? `${undercurrentState.activeCue} is bleeding through.`
+                : 'No hidden pressure active.';
+        }
+
+        if (undercurrentSummaryEl) {
+            undercurrentSummaryEl.textContent = undercurrentState.summary;
+        }
+
+        if (undercurrentTraceEl) {
+            if (undercurrentState.trace.length === 0) {
+                undercurrentTraceEl.innerHTML = '<span class="undercurrent-trace-chip" data-kind="ambient">quiet</span>';
+            } else {
+                undercurrentTraceEl.innerHTML = undercurrentState.trace.map((entry) => (
+                    `<span class="undercurrent-trace-chip" data-kind="${escapeHtml(entry.kind)}">${escapeHtml(entry.text)}</span>`
+                )).join('');
             }
         }
 

@@ -195,6 +195,74 @@
             color: #a9b8be;
         }
 
+        #kp-undercurrent {
+            margin-top: 8px;
+            padding: 8px;
+            border: 1px solid rgba(0, 200, 255, 0.12);
+            background: linear-gradient(180deg, rgba(0, 200, 255, 0.05) 0%, rgba(255, 255, 255, 0.02) 100%);
+        }
+
+        .undercurrent-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 8px;
+            font-size: 10px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            color: #8cb5c0;
+        }
+
+        #kp-undercurrent-meter {
+            margin-top: 8px;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(200, 200, 200, 0.08);
+            overflow: hidden;
+        }
+
+        #kp-undercurrent-meter-fill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, rgba(0, 200, 255, 0.22) 0%, rgba(255, 200, 0, 0.58) 100%);
+            transition: width 180ms ease;
+        }
+
+        #kp-undercurrent-active,
+        #kp-undercurrent-summary {
+            margin-top: 8px;
+            font-size: 11px;
+            line-height: 1.5;
+            color: #bdd3da;
+        }
+
+        #kp-undercurrent-trace {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 8px;
+        }
+
+        .undercurrent-trace-chip {
+            padding: 3px 6px;
+            border: 1px solid rgba(0, 200, 255, 0.14);
+            background: rgba(0, 200, 255, 0.08);
+            color: #dff6fb;
+            font-size: 10px;
+            letter-spacing: 0.8px;
+            text-transform: uppercase;
+        }
+
+        .undercurrent-trace-chip[data-kind="ambient"] {
+            border-color: rgba(200, 200, 200, 0.12);
+            background: rgba(255, 255, 255, 0.04);
+            color: #c1d0d5;
+        }
+
+        .undercurrent-trace-chip[data-kind="surge"] {
+            border-color: rgba(255, 200, 0, 0.22);
+            color: #ffd77a;
+        }
+
         #kp-branch-path {
             display: flex;
             align-items: center;
@@ -677,6 +745,13 @@
             </div>
         </div>
         <button id="kp-hidden-reveal" class="narrative-btn" disabled>NO CONTEXT TO REVEAL</button>
+        <div id="kp-undercurrent" class="narrative-block">
+            <div class="undercurrent-head"><span>Undercurrent</span><span id="kp-undercurrent-stage">dormant</span></div>
+            <div id="kp-undercurrent-meter"><div id="kp-undercurrent-meter-fill"></div></div>
+            <div id="kp-undercurrent-active">No hidden pressure active.</div>
+            <div id="kp-undercurrent-summary">No background trace yet.</div>
+            <div id="kp-undercurrent-trace"></div>
+        </div>
         <div id="kp-hidden-context-detail" hidden></div>
         <div id="kp-selected-event" class="narrative-block">
             <div class="timeline-entry"><span class="timeline-text">No event selected.</span></div>
