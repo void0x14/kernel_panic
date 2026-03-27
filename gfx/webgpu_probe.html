@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>WebGPU Probe</title>
+<style>
+    body { background: #0a0a0a; color: #e0e0e0; font-family: monospace; padding: 2rem; }
+    h1 { font-size: 1.2rem; color: #888; margin-bottom: 1rem; }
+    .stage { margin: 0.3rem 0; }
+    .pass { color: #4caf50; }
+    .fail { color: #f44336; }
+    canvas { display: none; }
+</style>
+</head>
+<body>
+<h1>WebGPU Probe</h1>
+<div id="log"></div>
+<canvas id="probe-canvas" width="1" height="1"></canvas>
+<script>
+(function () {
+    const logEl = document.getElementById('log');
+    const canvas = document.getElementById('probe-canvas');
+
+    function log(label, ok, detail) {
+        const cls = ok ? 'pass' : 'fail';
+        const tag = ok ? 'OK' : 'FAIL';
+        const extra = detail ? ' — ' + detail : '';
+        logEl.innerHTML += `<div class="stage"><span class="${cls}">[${tag}]</span> ${label}${extra}</div>`;
+    }
+
+    function adapterInfo(adapter) {
+        if (!adapter) return null;
+        try {
+            const info = adapter.info || {};
+            const vendor = info.vendor || null;
+            const arch = info.architecture || null;
+            const parts = [vendor, arch].filter(Boolean);
+            return parts.length > 0 ? parts.join(' / ') : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    async function probe() {
+        // Stage 1
+        const hasGpu = !!navigator.gpu;
+        log('navigator.gpu', hasGpu);
+
+        // Stage 2a: default — always runs
+        let defaultAdapter = null;
+        let defaultError = null;
+        if (hasGpu) {
+            try {
+                defaultAdapter = await navigator.gpu.requestAdapter();
+            } catch (e) {
+                defaultError = String(e?.message || e);
+            }
+        } else {
+            defaultError = 'no gpu api';
+        }
+        if (defaultError) {
+            log('requestAdapter(default)', false, defaultError);
+        } else if (defaultAdapter) {
+            log('requestAdapter(default)', true, adapterInfo(defaultAdapter));
+        } else {
+            log('requestAdapter(default)', false);
+        }
+
+        // Stage 2b: high-performance — always runs
+        let hpAdapter = null;
+        let hpError = null;
+        if (hasGpu) {
+            try {
+                hpAdapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+            } catch (e) {
+                hpError = String(e?.message || e);
+            }
+        } else {
+            hpError = 'no gpu api';
+        }
+        if (hpError) {
+            log('requestAdapter(high-performance)', false, hpError);
+        } else if (hpAdapter) {
+            log('requestAdapter(high-performance)', true, adapterInfo(hpAdapter));
+        } else {
+            log('requestAdapter(high-performance)', false);
+        }
+
+        // Stage 2c: low-power — always runs
+        let lpAdapter = null;
+        let lpError = null;
+        if (hasGpu) {
+            try {
+                lpAdapter = await navigator.gpu.requestAdapter({ powerPreference: 'low-power' });
+            } catch (e) {
+                lpError = String(e?.message || e);
+            }
+        } else {
+            lpError = 'no gpu api';
+        }
+        if (lpError) {
+            log('requestAdapter(low-power)', false, lpError);
+        } else if (lpAdapter) {
+            log('requestAdapter(low-power)', true, adapterInfo(lpAdapter));
+        } else {
+            log('requestAdapter(low-power)', false);
+        }
+
+        // Stage 2d: selected adapter summary — always runs
+        let selectedAdapter = null;
+        let selectedName = 'none';
+        if (defaultAdapter) { selectedAdapter = defaultAdapter; selectedName = 'default'; }
+        else if (hpAdapter) { selectedAdapter = hpAdapter; selectedName = 'high-performance'; }
+        else if (lpAdapter) { selectedAdapter = lpAdapter; selectedName = 'low-power'; }
+        log('selected-adapter', selectedName !== 'none', selectedName);
+
+        // Stage 3: requestDevice — always runs
+        let device = null;
+        if (selectedAdapter) {
+            try {
+                device = await selectedAdapter.requestDevice();
+            } catch (e) {
+                log('requestDevice(selected-adapter)', false, String(e?.message || e));
+            }
+        } else {
+            log('requestDevice(selected-adapter)', false, 'no adapter');
+        }
+        if (device) {
+            log('requestDevice(selected-adapter)', true);
+        } else if (!selectedAdapter) {
+            // already logged above
+        }
+
+        // Stage 4: canvas context — always runs
+        let ctx = null;
+        if (device) {
+            ctx = canvas.getContext('webgpu');
+        }
+        log('getContext(\'webgpu\')', !!ctx, device ? null : 'no device');
+
+        // Stage 5: configure — always runs
+        if (ctx) {
+            try {
+                const format = navigator.gpu.getPreferredCanvasFormat();
+                ctx.configure({ device, format, alphaMode: 'premultiplied' });
+                log('context.configure()', true, format);
+            } catch (e) {
+                log('context.configure()', false, String(e?.message || e));
+            }
+        } else {
+            log('context.configure()', false, 'no context');
+        }
+    }
+
+    probe();
+})();
+</script>
+</body>
+</html>
