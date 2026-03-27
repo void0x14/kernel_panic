@@ -77,6 +77,96 @@ async function init() {
         return Math.min(1, Math.max(0, value));
     }
 
+    const MODE_CONFIG = {
+        passive: {
+            label: 'PASSIVE',
+            sigma_multiplier: 0.7,
+            pressure_bias: 0.12,
+            world_threshold: 0.82,
+            reveal_threshold: 0.58,
+        },
+        semi: {
+            label: 'SEMI',
+            sigma_multiplier: 1.0,
+            pressure_bias: 0.34,
+            world_threshold: 0.58,
+            reveal_threshold: 0.36,
+        },
+        interactive: {
+            label: 'INTERACTIVE',
+            sigma_multiplier: 1.28,
+            pressure_bias: 0.62,
+            world_threshold: 0.36,
+            reveal_threshold: 0.2,
+        },
+    };
+
+    function normalizeModeKey(value) {
+        return typeof value === 'string' && MODE_CONFIG[value] ? value : 'semi';
+    }
+
+    function getModeState() {
+        const key = normalizeModeKey(window._kpModeState && window._kpModeState.key);
+        const config = MODE_CONFIG[key];
+        const state = {
+            key,
+            label: config.label,
+            sigma_multiplier: config.sigma_multiplier,
+            pressure_bias: config.pressure_bias,
+            world_threshold: config.world_threshold,
+            reveal_threshold: config.reveal_threshold,
+        };
+        window._kpModeState = state;
+        return state;
+    }
+
+    function setModeState(nextKey) {
+        const nextState = getModeState();
+        const key = normalizeModeKey(nextKey);
+        if (nextState.key === key) return nextState;
+
+        const config = MODE_CONFIG[key];
+        window._kpModeState = {
+            key,
+            label: config.label,
+            sigma_multiplier: config.sigma_multiplier,
+            pressure_bias: config.pressure_bias,
+            world_threshold: config.world_threshold,
+            reveal_threshold: config.reveal_threshold,
+        };
+
+        const sceneSnapshot = window._kpSceneData && typeof window._kpSceneData === 'object'
+            ? cloneSceneSnapshot(window._kpSceneData)
+            : null;
+        pushTimelineEvent('mode', `mode -> ${config.label.toLowerCase()}`, Date.now(), {
+            sceneSnapshot,
+            branchId: 0,
+        });
+        syncNarrativeUi();
+        return window._kpModeState;
+    }
+
+    function computeWorldState(sceneData, panicScore, modeState) {
+        const intensity = Number.isFinite(sceneData && sceneData.emotion_intensity) ? clamp01(sceneData.emotion_intensity) : 0;
+        const panic = Number.isFinite(panicScore) ? clamp01(panicScore / 2.2) : 0;
+        const hiddenWeight = Array.isArray(sceneData && sceneData.hidden_context_candidates)
+            ? clamp01(sceneData.hidden_context_candidates.length / 4)
+            : 0;
+        const pressure = clamp01(intensity * 0.42 + panic * 0.42 + hiddenWeight * 0.16 + modeState.pressure_bias);
+        const detection = pressure >= 0.88 ? 'locked-on' : pressure >= 0.6 ? 'observed' : pressure >= 0.32 ? 'flicker' : 'latent';
+        const worldResponse = pressure >= modeState.world_threshold + 0.28 ? 'hostile'
+            : pressure >= modeState.world_threshold ? 'reactive'
+                : pressure >= modeState.world_threshold * 0.58 ? 'watchful'
+                    : 'dormant';
+
+        return {
+            pressure,
+            detection,
+            world_response: worldResponse,
+            reveal_ready: pressure >= modeState.reveal_threshold,
+        };
+    }
+
     function lerp(a, b, t) {
         return a + (b - a) * t;
     }
@@ -194,6 +284,7 @@ async function init() {
     window._kpNarrativeState = narrativeState;
     const MAX_BRANCHES = 64;
     window._kpActiveBranchCount = window._kpActiveBranchCount || 1;
+    getModeState();
 
     function cloneSceneSnapshot(sceneData) {
         const nextScene = sceneData && typeof sceneData === 'object' ? sceneData : {};
@@ -206,6 +297,8 @@ async function init() {
             emotion_valence: Number.isFinite(nextScene.emotion_valence) ? nextScene.emotion_valence : 0,
             emotion_intensity: Number.isFinite(nextScene.emotion_intensity) ? nextScene.emotion_intensity : 0,
             sigma: Number.isFinite(nextScene.sigma) ? nextScene.sigma : 0,
+            runtime_mode: nextScene.runtime_mode || 'semi',
+            runtime_sigma: Number.isFinite(nextScene.runtime_sigma) ? nextScene.runtime_sigma : (Number.isFinite(nextScene.sigma) ? nextScene.sigma : 0),
             llm_mode: nextScene.llm_mode || '',
             llm_status: nextScene.llm_status || '',
             llm_latency_ms: nextScene.llm_latency_ms ?? null,
@@ -374,6 +467,7 @@ async function init() {
         const revealBtn = document.getElementById('kp-hidden-reveal');
         const forkBtn = document.getElementById('kp-fork-now');
         const divergenceSlider = document.getElementById('kp-divergence');
+        const modeSelect = document.getElementById('kp-mode-select');
 
         if (branchEl) {
             branchEl.addEventListener('click', (event) => {
@@ -410,6 +504,12 @@ async function init() {
             });
         }
 
+        if (modeSelect) {
+            modeSelect.addEventListener('change', () => {
+                setModeState(modeSelect.value);
+            });
+        }
+
         narrativeState._bound = true;
     }
 
@@ -423,14 +523,21 @@ async function init() {
         const divergenceValueEl = document.getElementById('kp-divergence-value');
         const divergenceSlider = document.getElementById('kp-divergence');
         const forkBtn = document.getElementById('kp-fork-now');
+        const modeSelect = document.getElementById('kp-mode-select');
+        const modeLabelEl = document.getElementById('kp-mode-label');
+        const detectionStatusEl = document.getElementById('kp-detection-status');
+        const worldResponseEl = document.getElementById('kp-world-response');
         const timelineListEl = document.getElementById('kp-timeline-list');
         const now = Number.isFinite(nowMs) ? nowMs : performance.now();
         const branchCount = Math.max(1, Number(window._kpActiveBranchCount) || 1);
+        const modeState = getModeState();
         if (!Number.isInteger(narrativeState.selectedBranchId) || narrativeState.selectedBranchId >= branchCount) {
             narrativeState.selectedBranchId = 0;
         }
 
         const selectedScene = getSelectedSceneSnapshot();
+        const selectedBranchScore = wasm ? wasm.sim_panic_score(narrativeState.selectedBranchId) : 0;
+        const worldState = computeWorldState(selectedScene || {}, selectedBranchScore, modeState);
         const selectedSignals = Array.isArray(selectedScene && selectedScene.hidden_context_candidates)
             ? selectedScene.hidden_context_candidates.filter((item) => typeof item === 'string' && item.trim().length > 0).slice(0, 4)
             : [];
@@ -460,6 +567,22 @@ async function init() {
 
         if (divergenceSlider && Number(divergenceSlider.value) !== narrativeState.divergenceCoeff) {
             divergenceSlider.value = String(narrativeState.divergenceCoeff);
+        }
+
+        if (modeSelect && modeSelect.value !== modeState.key) {
+            modeSelect.value = modeState.key;
+        }
+
+        if (modeLabelEl) {
+            modeLabelEl.textContent = modeState.label;
+        }
+
+        if (detectionStatusEl) {
+            detectionStatusEl.textContent = worldState.detection;
+        }
+
+        if (worldResponseEl) {
+            worldResponseEl.textContent = worldState.world_response;
         }
 
         if (forkBtn) {
@@ -493,9 +616,11 @@ async function init() {
         }
 
         if (hiddenRevealBtn) {
-            hiddenRevealBtn.disabled = selectedSignals.length === 0;
+            hiddenRevealBtn.disabled = selectedSignals.length === 0 || !worldState.reveal_ready;
             hiddenRevealBtn.textContent = selectedSignals.length === 0
                 ? 'NO CONTEXT TO REVEAL'
+                : !worldState.reveal_ready
+                    ? 'PRESSURE TOO LOW'
                 : (narrativeState.hiddenRevealOpen ? 'HIDE CONTEXT' : 'REVEAL CONTEXT');
         }
 
@@ -646,6 +771,10 @@ async function init() {
                 ['time', sceneData.time_of_day || '-'],
                 ['weather', sceneData.weather || '-'],
                 ['atmosphere', sceneData.atmosphere || '-'],
+                ['mode', sceneData.runtime_mode || getModeState().key],
+                ['runtime_sigma', Number.isFinite(sceneData.runtime_sigma) ? sceneData.runtime_sigma.toFixed(3) : '-'],
+                ['detection', computeWorldState(sceneData, wasm ? wasm.sim_panic_score(0) : 0, getModeState()).detection],
+                ['world_response', computeWorldState(sceneData, wasm ? wasm.sim_panic_score(0) : 0, getModeState()).world_response],
                 ['valence', Number.isFinite(sceneData.emotion_valence) ? sceneData.emotion_valence.toFixed(3) : '-'],
                 ['intensity', Number.isFinite(sceneData.emotion_intensity) ? sceneData.emotion_intensity.toFixed(3) : '-'],
                 ['llm_status', sceneData.llm_status || '-'],
@@ -914,12 +1043,17 @@ async function init() {
         if (!sceneEl) return;
 
         const sceneData = window._kpSceneData || {};
+        const worldState = computeWorldState(sceneData, wasm ? wasm.sim_panic_score(0) : 0, getModeState());
         const sceneRows = [
             ['source', sceneData.source ? sceneData.source.toUpperCase() : '-'],
             ['location', sceneData.location || '-'],
             ['time', sceneData.time_of_day || '-'],
             ['weather', sceneData.weather || '-'],
             ['atmosphere', sceneData.atmosphere || '-'],
+            ['mode', sceneData.runtime_mode || getModeState().key],
+            ['runtime_sigma', Number.isFinite(sceneData.runtime_sigma) ? sceneData.runtime_sigma.toFixed(3) : '-'],
+            ['detection', worldState.detection],
+            ['world_response', worldState.world_response],
             ['valence', Number.isFinite(sceneData.emotion_valence) ? sceneData.emotion_valence.toFixed(3) : '-'],
             ['intensity', Number.isFinite(sceneData.emotion_intensity) ? sceneData.emotion_intensity.toFixed(3) : '-'],
             ['llm_status', sceneData.llm_status || '-'],

@@ -308,6 +308,36 @@
             border-color: #00C8FF;
         }
 
+        #kp-mode-select {
+            min-width: 150px;
+            padding: 6px 8px;
+            background: rgba(0, 0, 0, 0.6);
+            border: 1px solid rgba(200, 200, 200, 0.2);
+            color: #C8C8C8;
+            font-family: monospace;
+            font-size: 11px;
+            text-transform: uppercase;
+            outline: none;
+        }
+
+        #kp-mode-select:focus {
+            border-color: #00C8FF;
+        }
+
+        #kp-mode-state {
+            margin-top: 8px;
+            padding: 8px 10px;
+            border: 1px solid rgba(200, 200, 200, 0.08);
+            background: rgba(255, 255, 255, 0.02);
+            font-size: 11px;
+            line-height: 1.5;
+            color: #A9B8BE;
+        }
+
+        .status-strong {
+            color: #DCEFF5;
+        }
+
         #kp-dropzone {
             margin-top: 8px;
             padding: 10px 12px;
@@ -477,10 +507,16 @@
                 <option value="chatgpt_json">CHATGPT JSON</option>
                 <option value="gemini_json">GEMINI JSON</option>
             </select>
+            <select id="kp-mode-select">
+                <option value="passive">PASSIVE</option>
+                <option value="semi" selected>SEMI</option>
+                <option value="interactive">INTERACTIVE</option>
+            </select>
             <label class="file-btn" for="kp-unified-file">ADD FILE</label>
             <input id="kp-unified-file" class="file-input-hidden" type="file" accept="audio/*,image/*,video/*,.json">
         </div>
         <div id="kp-dropzone">Drop a file here or choose one. Auto mode detects audio, image, video, and JSON imports.</div>
+        <div id="kp-mode-state">MODE <span id="kp-mode-label" class="status-strong">SEMI</span> · DETECTION <span id="kp-detection-status" class="status-strong">latent</span> · WORLD <span id="kp-world-response" class="status-strong">dormant</span></div>
         <textarea id="kp-memory-text" placeholder="Anını yaz... (örn: 2019 yaz Istanbul arkadaşımla tartıştım çok sinirliydim)"></textarea>
         <button id="kp-inject">INJECT</button>
         <div class="inject-hint">Ctrl+Enter to inject</div>

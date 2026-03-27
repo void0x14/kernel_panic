@@ -276,8 +276,24 @@
             llm_status: sceneData.llm_status || '',
             llm_latency_ms: sceneData.llm_latency_ms ?? null,
             fallback_reason: sceneData.fallback_reason || '',
+            runtime_mode: sceneData.runtime_mode || 'semi',
+            runtime_sigma: Number.isFinite(sceneData.runtime_sigma) ? sceneData.runtime_sigma : (Number.isFinite(sceneData.sigma) ? sceneData.sigma : 0),
             persons: Array.isArray(sceneData.persons) ? sceneData.persons.slice() : [],
             hidden_context_candidates: Array.isArray(sceneData.hidden_context_candidates) ? sceneData.hidden_context_candidates.slice() : [],
+        };
+    }
+
+    function getRuntimeModeState() {
+        const state = window._kpModeState;
+        if (!state || typeof state !== 'object') {
+            return { key: 'semi', sigma_multiplier: 1.0 };
+        }
+
+        return {
+            key: typeof state.key === 'string' ? state.key : 'semi',
+            sigma_multiplier: typeof state.sigma_multiplier === 'number' && Number.isFinite(state.sigma_multiplier)
+                ? state.sigma_multiplier
+                : 1.0,
         };
     }
 
@@ -294,6 +310,10 @@
     }
 
     function applySceneDataToRuntime(wasm, timestamp, sceneData) {
+        const runtimeMode = getRuntimeModeState();
+        const adjustedSigma = clamp((Number.isFinite(sceneData.sigma) ? sceneData.sigma : 0) * runtimeMode.sigma_multiplier, 0.0, 1.5);
+        sceneData.runtime_mode = runtimeMode.key;
+        sceneData.runtime_sigma = adjustedSigma;
         window._kpSceneData = sceneData;
         dispatchSceneUpdate(timestamp, sceneData);
 
@@ -310,7 +330,7 @@
             sceneData.location,
             sceneData.emotion_valence,
             sceneData.emotion_intensity,
-            sceneData.sigma,
+            adjustedSigma,
         );
         logParsed(result);
     }
