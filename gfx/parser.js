@@ -326,6 +326,21 @@
 
             window._kpSceneData = refinedSceneData;
 
+            if (wasm) {
+                const refinedResult = writeMemoryEvent(
+                    wasm,
+                    null,
+                    0,
+                    timestamp,
+                    refinedSceneData.location,
+                    refinedSceneData.emotion_valence,
+                    refinedSceneData.emotion_intensity,
+                    refinedSceneData.sigma,
+                );
+                logParsed(refinedResult);
+                if (window._kpUpdatePanic) window._kpUpdatePanic();
+            }
+
             updateScenePanel(refinedSceneData, 'llm', llmLatency);
 
             console.log(`[LLM] status=${llmStatus} latency_ms=${Math.round(llmLatency)} source=llm`);
