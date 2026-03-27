@@ -579,6 +579,8 @@
         llmTest,
         parseChatGPT,
         parseGemini,
+        parseLlmSceneData,
+        buildSceneData,
         scoreEmotion,
         extractLocation,
     };
