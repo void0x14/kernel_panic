@@ -574,6 +574,11 @@
         const runtimeText = buildRuntimeTextFromCanonical(submission);
         window._kpCanonicalLastSubmission = Object.assign({}, submission, { runtime_text: runtimeText });
         updateCanonicalStatus(window._kpCanonicalLastSubmission, runtimeText);
+        window.dispatchEvent(new CustomEvent('kp:canonical-submitted', {
+            detail: {
+                submission: window._kpCanonicalLastSubmission,
+            },
+        }));
         await applyNarrativeText(runtimeText, options);
         return window._kpCanonicalLastSubmission;
     }

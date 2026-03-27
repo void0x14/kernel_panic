@@ -146,6 +146,109 @@ async function init() {
         return window._kpModeState;
     }
 
+    const backendState = {
+        endpoint: window._kpBackendEndpoint || 'http://127.0.0.1:8787',
+        candidateEndpoints: [window._kpBackendEndpoint || '', 'http://127.0.0.1:8787', 'http://127.0.0.1:8788'].filter(Boolean),
+        health: 'offline',
+        sessionId: null,
+        lastError: '',
+        lastEventType: '',
+        lastSavedAtMs: 0,
+        sessionStarted: false,
+    };
+    window._kpBackendState = backendState;
+
+    function syncBackendUi() {
+        const statusEl = document.getElementById('kp-backend-status');
+        if (!statusEl) return;
+        const health = backendState.health || 'offline';
+        const sessionText = backendState.sessionId == null ? 'no persistence session' : `session ${backendState.sessionId}`;
+        const eventText = backendState.lastEventType ? ` · last ${backendState.lastEventType}` : '';
+        const errorText = backendState.lastError ? `<br>${escapeHtml(backendState.lastError)}` : '';
+        statusEl.innerHTML = `BACKEND <strong>${escapeHtml(health)}</strong> · ${escapeHtml(sessionText)}${escapeHtml(eventText)}${errorText}`;
+    }
+
+    async function backendRequest(path, init) {
+        const response = await fetch(`${backendState.endpoint}${path}`, Object.assign({ mode: 'cors' }, init || {}));
+        if (!response.ok) {
+            throw new Error(`backend ${response.status}`);
+        }
+        return response;
+    }
+
+    async function probeBackend() {
+        for (const endpoint of backendState.candidateEndpoints) {
+            try {
+                const response = await fetch(`${endpoint}/health`, { method: 'GET', mode: 'cors' });
+                if (!response.ok) continue;
+                backendState.endpoint = endpoint;
+                backendState.health = 'online';
+                backendState.lastError = '';
+                syncBackendUi();
+                return;
+            } catch (_error) {
+                // try next endpoint
+            }
+        }
+        backendState.health = 'offline';
+        backendState.lastError = 'backend unavailable';
+        syncBackendUi();
+    }
+
+    async function ensureBackendSession(seedPayload) {
+        if (backendState.health !== 'online') {
+            await probeBackend();
+        }
+        if (backendState.sessionId != null) return backendState.sessionId;
+        const payload = seedPayload || {};
+        const response = await backendRequest('/api/session/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        const data = await response.json();
+        backendState.health = 'online';
+        backendState.lastError = '';
+        backendState.sessionId = data.session_id;
+        backendState.sessionStarted = true;
+        syncBackendUi();
+        return backendState.sessionId;
+    }
+
+    async function appendBackendEvent(eventType, payload) {
+        try {
+            const sessionId = await ensureBackendSession({
+                origin: 'browser',
+                page_url: location.href,
+            });
+            await backendRequest(`/api/session/${sessionId}/event/${eventType}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload || {}),
+            });
+            backendState.health = 'online';
+            backendState.lastError = '';
+            backendState.lastEventType = eventType;
+            backendState.lastSavedAtMs = Date.now();
+        } catch (error) {
+            backendState.health = 'offline';
+            backendState.lastError = error && error.message ? error.message : 'backend append failed';
+        }
+        syncBackendUi();
+    }
+
+    async function loadBackendSession(sessionId) {
+        const response = await backendRequest(`/api/session/${sessionId}`, { method: 'GET' });
+        return await response.json();
+    }
+
+    window._kpBackend = {
+        getState: () => Object.assign({}, backendState),
+        probe: probeBackend,
+        appendEvent: appendBackendEvent,
+        loadSession: loadBackendSession,
+    };
+
     function computeWorldState(sceneData, panicScore, modeState) {
         const intensity = Number.isFinite(sceneData && sceneData.emotion_intensity) ? clamp01(sceneData.emotion_intensity) : 0;
         const panic = Number.isFinite(panicScore) ? clamp01(panicScore / 2.2) : 0;
@@ -620,6 +723,15 @@ async function init() {
             targetBranchId: newId,
             divergenceCoeff: coeff,
         });
+        window.dispatchEvent(new CustomEvent('kp:fork-created', {
+            detail: {
+                sourceBranchId: fromBranchId,
+                targetBranchId: newId,
+                divergenceCoeff: coeff,
+                sceneData: cloneSceneSnapshot(sceneData),
+                timestamp_ms: Date.now(),
+            },
+        }));
         syncNarrativeUi();
         console.log(`Forked: new branch ${newId}, active=${window._kpActiveBranchCount}, coeff=${coeff.toFixed(2)}`);
         return newId;
@@ -679,6 +791,7 @@ async function init() {
     }
 
     function syncNarrativeUi(nowMs) {
+        syncBackendUi();
         const hiddenSignalEl = document.getElementById('kp-hidden-signal');
         const hiddenRevealBtn = document.getElementById('kp-hidden-reveal');
         const hiddenDetailEl = document.getElementById('kp-hidden-context-detail');
@@ -949,6 +1062,42 @@ async function init() {
         const detail = event.detail || {};
         handleSceneNarrativeUpdate(detail.sceneData || window._kpSceneData || {}, detail.timestamp_ms);
     });
+
+    window.addEventListener('kp:canonical-submitted', (event) => {
+        const detail = event.detail || {};
+        const submission = detail.submission;
+        if (!submission) return;
+        void appendBackendEvent('canonical', {
+            source_type: submission.source_type,
+            route_kind: submission.route_kind,
+            submitted_at_ms: submission.submitted_at_ms,
+            runtime_text: submission.runtime_text,
+            memory_candidate: submission.memory_candidate,
+        });
+    });
+
+    window.addEventListener('kp:scene-updated', (event) => {
+        const detail = event.detail || {};
+        if (!backendState.sessionStarted) return;
+        void appendBackendEvent('scene', {
+            timestamp_ms: detail.timestamp_ms || Date.now(),
+            scene: detail.sceneData || window._kpSceneData || {},
+        });
+    });
+
+    window.addEventListener('kp:fork-created', (event) => {
+        const detail = event.detail || {};
+        if (!backendState.sessionStarted) return;
+        void appendBackendEvent('fork', {
+            timestamp_ms: detail.timestamp_ms || Date.now(),
+            source_branch_id: detail.sourceBranchId,
+            target_branch_id: detail.targetBranchId,
+            divergence_coeff: detail.divergenceCoeff,
+            scene: detail.sceneData || {},
+        });
+    });
+
+    void probeBackend();
 
     if (window._kpSceneData && typeof window._kpSceneData === 'object') {
         handleSceneNarrativeUpdate(window._kpSceneData, Date.now());

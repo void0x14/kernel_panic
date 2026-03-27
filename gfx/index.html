@@ -534,6 +534,21 @@
             font-weight: 600;
         }
 
+        #kp-backend-status {
+            margin-top: 8px;
+            padding: 8px 10px;
+            border: 1px solid rgba(255, 200, 0, 0.12);
+            background: rgba(255, 200, 0, 0.04);
+            font-size: 11px;
+            line-height: 1.5;
+            color: #bfcad0;
+        }
+
+        #kp-backend-status strong {
+            color: #ffe4a3;
+            font-weight: 600;
+        }
+
         #kp-dropzone {
             margin-top: 8px;
             padding: 10px 12px;
@@ -714,6 +729,7 @@
         <div id="kp-dropzone">Drop a file here or choose one. Auto mode detects audio, image, video, and JSON imports.</div>
         <div id="kp-mode-state">MODE <span id="kp-mode-label" class="status-strong">SEMI</span> · DETECTION <span id="kp-detection-status" class="status-strong">latent</span> · WORLD <span id="kp-world-response" class="status-strong">dormant</span></div>
         <div id="kp-canonical-status">CANONICAL <strong>idle</strong> · no unified submission yet.</div>
+        <div id="kp-backend-status">BACKEND <strong>offline</strong> · no persistence session.</div>
         <textarea id="kp-memory-text" placeholder="Anını yaz... (örn: 2019 yaz Istanbul arkadaşımla tartıştım çok sinirliydim)"></textarea>
         <button id="kp-inject">INJECT</button>
         <div class="inject-hint">Ctrl+Enter to inject</div>
