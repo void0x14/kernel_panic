@@ -364,26 +364,157 @@
         };
     }
 
-    // ============================================================
-    // CHANNEL 1: Free Text
-    // ============================================================
-    async function injectText(text) {
-        const wasm = window._kpWasm;
+    function getCanonicalStatusElement() {
+        return document.getElementById('kp-canonical-status');
+    }
 
-        const timestamp = BigInt(Date.now()) * 1000000n;
+    function getTextNote() {
+        const textArea = document.getElementById('kp-memory-text');
+        return textArea && typeof textArea.value === 'string' ? textArea.value.trim() : '';
+    }
+
+    function updateCanonicalStatus(submission, runtimeText) {
+        const statusEl = getCanonicalStatusElement();
+        if (!statusEl) return;
+        if (!submission) {
+            statusEl.innerHTML = 'CANONICAL <strong>idle</strong> · no unified submission yet.';
+            return;
+        }
+
+        const confidence = typeof submission.memory_candidate.confidence === 'number'
+            ? submission.memory_candidate.confidence.toFixed(2)
+            : '0.00';
+        const preview = typeof runtimeText === 'string' && runtimeText.trim().length > 0
+            ? runtimeText.trim().slice(0, 120)
+            : 'no runtime text';
+        statusEl.innerHTML = `CANONICAL <strong>${submission.source_type}</strong> · route <strong>${submission.route_kind}</strong> · conf <strong>${confidence}</strong><br>${preview}`;
+    }
+
+    function buildHintedMemoryCandidate(locationHints, timeHints, personHints, emotionHints, eventHints, confidence) {
+        return {
+            location_hints: locationHints,
+            time_hints: timeHints,
+            person_hints: personHints,
+            emotion_hints: emotionHints,
+            event_hints: eventHints,
+            confidence,
+        };
+    }
+
+    function buildTextCanonicalSubmission(text, sourceType, timestampMs) {
+        const emotion = scoreEmotion(text);
+        const location = extractLocation(text);
+        return {
+            source_type: sourceType || 'text',
+            submitted_at_ms: timestampMs || Date.now(),
+            route_kind: 'text_runtime',
+            raw_inputs: {
+                text,
+                transcript: null,
+                image_descriptions: [],
+                video_segments: [],
+                metadata: {},
+            },
+            memory_candidate: buildHintedMemoryCandidate(
+                location !== 'unknown' ? [location] : [],
+                [],
+                [],
+                emotion.intensity > 0.05 ? [emotion.valence >= 0 ? 'positive' : 'negative'] : [],
+                text.trim().length > 0 ? [text.trim().slice(0, 96)] : [],
+                Math.max(0.2, Math.min(0.92, 0.3 + emotion.intensity))
+            ),
+        };
+    }
+
+    function buildAudioCanonicalSubmission(submission, noteText) {
+        return {
+            source_type: submission.source_type,
+            submitted_at_ms: submission.submitted_at_ms || Date.now(),
+            route_kind: 'audio_runtime',
+            raw_inputs: {
+                text: noteText || null,
+                transcript: noteText || null,
+                image_descriptions: [],
+                video_segments: [],
+                metadata: {
+                    file_name: submission.file_name,
+                    mime_type: submission.mime_type,
+                    size_bytes: submission.size_bytes,
+                    note_text: noteText || '',
+                },
+            },
+            memory_candidate: buildHintedMemoryCandidate(
+                [],
+                [],
+                [],
+                noteText ? buildTextCanonicalSubmission(noteText, 'text').memory_candidate.emotion_hints : [],
+                [noteText || (submission.source_type === 'live_audio' ? 'live audio memory' : 'audio memory')],
+                noteText ? 0.48 : 0.22
+            ),
+        };
+    }
+
+    function buildMultimodalCanonicalSubmission(submission, noteText) {
+        const analysis = submission.analysis || {};
+        const summary = typeof analysis.summary === 'string' ? analysis.summary : `${submission.source_type} memory`;
+        return {
+            source_type: submission.source_type,
+            submitted_at_ms: submission.submitted_at_ms || Date.now(),
+            route_kind: 'multimodal_runtime',
+            raw_inputs: {
+                text: noteText || null,
+                transcript: null,
+                image_descriptions: submission.source_type === 'image' ? [summary] : [],
+                video_segments: submission.source_type === 'video' && Array.isArray(analysis.video_segments) ? analysis.video_segments : [],
+                metadata: Object.assign({}, submission.metadata, { note_text: noteText || '' }),
+            },
+            memory_candidate: buildHintedMemoryCandidate(
+                [],
+                [],
+                [],
+                Array.isArray(analysis.emotion_hints) ? analysis.emotion_hints : [],
+                [summary].concat(noteText ? [noteText] : []),
+                noteText ? 0.56 : 0.34
+            ),
+        };
+    }
+
+    function buildRuntimeTextFromCanonical(submission) {
+        const raw = submission && submission.raw_inputs ? submission.raw_inputs : {};
+        const candidate = submission && submission.memory_candidate ? submission.memory_candidate : {};
+        const fragments = [];
+        if (isUsableString(raw.text)) fragments.push(raw.text.trim());
+        if (isUsableString(raw.transcript) && (!isUsableString(raw.text) || raw.transcript.trim() !== raw.text.trim())) fragments.push(raw.transcript.trim());
+        if (Array.isArray(raw.image_descriptions) && raw.image_descriptions.length > 0) fragments.push(raw.image_descriptions.join('. '));
+        if (Array.isArray(raw.video_segments) && raw.video_segments.length > 0) {
+            fragments.push(raw.video_segments.map((segment) => segment && segment.summary ? segment.summary : '').filter(Boolean).join('. '));
+        }
+        if (Array.isArray(candidate.event_hints) && candidate.event_hints.length > 0) fragments.push(candidate.event_hints.join('. '));
+        if (Array.isArray(candidate.location_hints) && candidate.location_hints.length > 0) fragments.push(`Location hints: ${candidate.location_hints.join(', ')}`);
+        if (Array.isArray(candidate.emotion_hints) && candidate.emotion_hints.length > 0) fragments.push(`Emotion hints: ${candidate.emotion_hints.join(', ')}`);
+
+        const runtimeText = fragments.map((item) => item.trim()).filter(Boolean).join('. ').trim();
+        if (runtimeText.length > 0) return runtimeText;
+
+        const sourceLabel = submission && submission.source_type ? submission.source_type.replace(/_/g, ' ') : 'memory input';
+        return `A ${sourceLabel} was submitted, but only metadata is currently available.`;
+    }
+
+    async function applyNarrativeText(text, options) {
+        const wasm = window._kpWasm;
+        const timestamp = options && typeof options.timestamp === 'bigint' ? options.timestamp : BigInt(Date.now()) * 1000000n;
         const startTime = performance.now();
         const injectToken = nextInjectToken();
 
         const sceneData = buildSceneData(text, null);
-
         applySceneDataToRuntime(wasm, timestamp, sceneData);
 
         const latency = performance.now() - startTime;
         console.log(`[LLM] status=fallback latency_ms=${Math.round(latency)} source=fallback mode=fallback`);
 
-        if (typeof window.llm_analyze_memory !== 'function' && typeof window.llm_analyze_memory_detailed !== 'function') {
-            return;
-        }
+        const allowRefine = !options || options.allowRefine !== false;
+        if (!allowRefine) return sceneData;
+        if (typeof window.llm_analyze_memory !== 'function' && typeof window.llm_analyze_memory_detailed !== 'function') return sceneData;
 
         const fastStartTime = performance.now();
         let fastResult;
@@ -401,13 +532,7 @@
         const fastLatency = performance.now() - fastStartTime;
 
         if (fastResult.status === 'ok' && fastResult.sceneData && isActiveInjectToken(injectToken)) {
-            const fastSceneData = annotateLlmSceneData(
-                buildSceneData(text, fastResult.sceneData),
-                'llm_fast',
-                'fast',
-                fastResult.status,
-                fastLatency
-            );
+            const fastSceneData = annotateLlmSceneData(buildSceneData(text, fastResult.sceneData), 'llm_fast', 'fast', fastResult.status, fastLatency);
             applySceneDataToRuntime(wasm, timestamp, fastSceneData);
             console.log(`[LLM] status=${fastResult.status} latency_ms=${Math.round(fastLatency)} source=llm_fast mode=fast`);
         } else {
@@ -415,14 +540,12 @@
             sceneData.llm_status = fastResult.status;
             sceneData.llm_latency_ms = Math.round(fastLatency);
             sceneData.fallback_reason = fastResult.status === 'ok' ? '' : fastResult.status;
-
             console.log(`[LLM] status=${fastResult.status} latency_ms=${Math.round(fastLatency)} source=fallback mode=fast`);
         }
 
         void (async () => {
             const deepStartTime = performance.now();
             let deepResult;
-
             try {
                 deepResult = await requestDetailedScene(text, 'deep');
             } catch (err) {
@@ -434,15 +557,8 @@
             }
 
             const deepLatency = performance.now() - deepStartTime;
-
             if (deepResult.status === 'ok' && deepResult.sceneData && isActiveInjectToken(injectToken)) {
-                const deepSceneData = annotateLlmSceneData(
-                    buildSceneData(text, deepResult.sceneData),
-                    'llm_deep',
-                    'deep',
-                    deepResult.status,
-                    deepLatency
-                );
+                const deepSceneData = annotateLlmSceneData(buildSceneData(text, deepResult.sceneData), 'llm_deep', 'deep', deepResult.status, deepLatency);
                 applySceneDataToRuntime(wasm, timestamp, deepSceneData);
                 console.log(`[LLM] status=${deepResult.status} latency_ms=${Math.round(deepLatency)} source=llm_deep mode=deep`);
                 return;
@@ -450,6 +566,24 @@
 
             console.log(`[LLM] status=${deepResult.status} latency_ms=${Math.round(deepLatency)} source=background_skip mode=deep`);
         })();
+
+        return sceneData;
+    }
+
+    async function submitCanonicalSubmission(submission, options) {
+        const runtimeText = buildRuntimeTextFromCanonical(submission);
+        window._kpCanonicalLastSubmission = Object.assign({}, submission, { runtime_text: runtimeText });
+        updateCanonicalStatus(window._kpCanonicalLastSubmission, runtimeText);
+        await applyNarrativeText(runtimeText, options);
+        return window._kpCanonicalLastSubmission;
+    }
+
+    // ============================================================
+    // CHANNEL 1: Free Text
+    // ============================================================
+    async function injectText(text) {
+        const submission = buildTextCanonicalSubmission(text, 'text', Date.now());
+        await submitCanonicalSubmission(submission, { allowRefine: true });
     }
 
 
@@ -475,9 +609,6 @@
     // CHANNEL 2: ChatGPT JSON Export
     // ============================================================
     function parseChatGPT(jsonStr) {
-        if (!window._kpWasm) { console.error('WASM not ready'); return; }
-        const wasm = window._kpWasm;
-
         let data;
         try {
             data = JSON.parse(jsonStr);
@@ -503,14 +634,13 @@
 
                 const createTime = entry.message.create_time || 0;
                 const timestamp = BigInt(Math.floor(createTime * 1e9));
-                const location = extractLocation(text);
-                const emotion = scoreEmotion(text);
+                const submission = buildTextCanonicalSubmission(text, 'chatgpt_json', Number(timestamp / 1000000n));
+                const currentIndex = eventIndex;
 
                 setTimeout(() => {
-                    const result = writeMemoryEvent(wasm, null, 0, timestamp, location, emotion.valence, emotion.intensity, emotion.sigma);
-                    console.log(`[ChatGPT ${eventIndex}]`);
-                    logParsed(result);
-                }, eventIndex * 16);
+                    void submitCanonicalSubmission(submission, { allowRefine: false, timestamp });
+                    console.log(`[ChatGPT ${currentIndex}] canonical route`);
+                }, currentIndex * 16);
 
                 eventIndex++;
             }
@@ -523,9 +653,6 @@
     // CHANNEL 3: Gemini JSON Export
     // ============================================================
     function parseGemini(jsonStr) {
-        if (!window._kpWasm) { console.error('WASM not ready'); return; }
-        const wasm = window._kpWasm;
-
         let data;
         try {
             data = JSON.parse(jsonStr);
@@ -590,14 +717,13 @@
 
             // Synthetic timestamp: index * 60 seconds
             const timestamp = baseTimestamp + BigInt(i * 60) * 1000000000n;
-            const location = extractLocation(text);
-            const emotion = scoreEmotion(text);
+            const submission = buildTextCanonicalSubmission(text, 'gemini_json', Number(timestamp / 1000000n));
+            const currentIndex = eventIndex;
 
             setTimeout(() => {
-                const result = writeMemoryEvent(wasm, null, 0, timestamp, location, emotion.valence, emotion.intensity, emotion.sigma);
-                console.log(`[Gemini ${eventIndex}]`);
-                logParsed(result);
-            }, eventIndex * 16);
+                void submitCanonicalSubmission(submission, { allowRefine: false, timestamp });
+                console.log(`[Gemini ${currentIndex}] canonical route`);
+            }, currentIndex * 16);
 
             eventIndex++;
         }
@@ -1038,6 +1164,8 @@
             audioState.error = '';
             audioState.submitted = true;
             syncAudioUi();
+            const canonicalSubmission = buildAudioCanonicalSubmission(submission, getTextNote());
+            void submitCanonicalSubmission(canonicalSubmission, { allowRefine: true });
             console.log('[AUDIO] Preview submitted for later processing', {
                 source_type: submission.source_type,
                 file_name: submission.file_name,
@@ -1065,6 +1193,8 @@
         multimodalState.error = '';
         multimodalState.submitted = true;
         syncAudioUi();
+        const canonicalSubmission = buildMultimodalCanonicalSubmission(submission, getTextNote());
+        void submitCanonicalSubmission(canonicalSubmission, { allowRefine: true });
         console.log('[MULTIMODAL] Preview submitted for later processing', {
             source_type: submission.source_type,
             file_name: submission.file_name,
@@ -1272,6 +1402,7 @@
             });
         }
 
+        updateCanonicalStatus(window._kpCanonicalLastSubmission || null, window._kpCanonicalLastSubmission && window._kpCanonicalLastSubmission.runtime_text);
         syncAudioUi();
     }
 
@@ -1303,6 +1434,12 @@
                 submitted: multimodalState.submitted,
                 error: multimodalState.error,
             }),
+        },
+        anyInput: {
+            getCanonicalState: () => window._kpCanonicalLastSubmission || null,
+            routeFile: handleUnifiedFile,
+            submitStaged: submitAudioPreview,
+            submitText: injectText,
         },
     };
 
