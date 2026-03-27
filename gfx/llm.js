@@ -10,12 +10,36 @@ const LLM_CONFIG = {
 
 const LOCATION_LABELS = ['home', 'office', 'school', 'hospital', 'station', 'airport', 'library', 'cafe', 'park', 'forest', 'beach', 'unknown'];
 const ATMOSPHERE_LABELS = ['tense', 'calm', 'melancholic', 'euphoric', 'neutral'];
+const LLM_MODE_CONFIG = {
+    fast: {
+        maxTokens: 64,
+        timeoutMs: 6000,
+    },
+    deep: {
+        maxTokens: LLM_CONFIG.maxTokens,
+        timeoutMs: 15000,
+    },
+};
 
 function getEndpointUrl() {
     return LLM_CONFIG.baseUrl + LLM_CONFIG.chatEndpoint;
 }
 
-function buildMessages(text) {
+function normalizeRequestMode(options) {
+    if (typeof options === 'string') {
+        return options === 'fast' ? 'fast' : 'deep';
+    }
+
+    return options && options.mode === 'fast' ? 'fast' : 'deep';
+}
+
+function buildMessages(text, options) {
+    const mode = normalizeRequestMode(options);
+    const isFastMode = mode === 'fast';
+    const fieldSchema = isFastMode
+        ? '{"location":"home|office|school|hospital|station|airport|library|cafe|park|forest|beach|unknown","time_of_day":"morning|afternoon|evening|night","weather":"clear|overcast|rain|fog","atmosphere":"tense|calm|melancholic|euphoric|neutral","emotion_valence":-1.0 to 1.0,"emotion_intensity":0.0 to 1.0}'
+        : '{"location":"home|office|school|hospital|station|airport|library|cafe|park|forest|beach|unknown","time_of_day":"morning|afternoon|evening|night","weather":"clear|overcast|rain|fog","atmosphere":"tense|calm|melancholic|euphoric|neutral","emotion_valence":-1.0 to 1.0,"emotion_intensity":0.0 to 1.0,"persons":["string"],"hidden_context_candidates":["string"]}';
+
     return [
         {
             role: 'system',
@@ -33,16 +57,20 @@ function buildMessages(text) {
         {
             role: 'user',
             content: [
-                'Analyze this memory and return SceneData JSON.',
+                isFastMode
+                    ? 'Analyze this memory and return FAST SceneData JSON for a low-latency first response.'
+                    : 'Analyze this memory and return DEEP SceneData JSON with richer detail.',
                 '',
                 'Fields:',
-                '{"location":"home|office|school|hospital|station|airport|library|cafe|park|forest|beach|unknown","time_of_day":"morning|afternoon|evening|night","weather":"clear|overcast|rain|fog","atmosphere":"tense|calm|melancholic|euphoric|neutral","emotion_valence":-1.0 to 1.0,"emotion_intensity":0.0 to 1.0,"persons":["string"],"hidden_context_candidates":["string"]}',
+                fieldSchema,
                 '',
                 'Rules:',
                 '- location must be a canonical label only',
                 '- atmosphere must be a canonical label only',
                 '- never put descriptive phrases into location',
-                '- put scene details into hidden_context_candidates if needed',
+                isFastMode
+                    ? '- fast mode: prioritize speed; skip extra narrative detail'
+                    : '- deep mode: add richer persons and hidden_context_candidates when supported',
                 '',
                 'Memory:',
                 text,
@@ -51,11 +79,14 @@ function buildMessages(text) {
     ];
 }
 
-function buildBody(text) {
+function buildBody(text, options) {
+    const mode = normalizeRequestMode(options);
+    const modeConfig = LLM_MODE_CONFIG[mode];
+
     return {
         model: LLM_CONFIG.model,
-        messages: buildMessages(text),
-        max_tokens: LLM_CONFIG.maxTokens,
+        messages: buildMessages(text, mode),
+        max_tokens: modeConfig.maxTokens,
         temperature: LLM_CONFIG.temperature,
     };
 }
@@ -225,16 +256,18 @@ function extractJsonObject(responseText) {
     return parsed ? parsed.sceneData : null;
 }
 
-async function requestCompletionDetailed(text) {
+async function requestCompletionDetailed(text, options) {
+    const mode = normalizeRequestMode(options);
+    const modeConfig = LLM_MODE_CONFIG[mode];
     const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), 15000);
+    const timeoutId = window.setTimeout(() => controller.abort(), modeConfig.timeoutMs);
     const endpoint = getEndpointUrl();
 
     try {
         const response = await fetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(buildBody(text)),
+            body: JSON.stringify(buildBody(text, mode)),
             signal: controller.signal,
         });
         window.clearTimeout(timeoutId);
@@ -282,6 +315,7 @@ async function requestCompletionDetailed(text) {
             sceneData: parsedResponse.sceneData,
             content,
             parse_mode: parsedResponse.parse_mode,
+            mode,
         };
     } catch (error) {
         window.clearTimeout(timeoutId);
@@ -296,14 +330,15 @@ async function requestCompletionDetailed(text) {
     }
 }
 
-async function requestCompletion(text) {
-    const result = await requestCompletionDetailed(text);
+async function requestCompletion(text, options) {
+    const result = await requestCompletionDetailed(text, options);
     return result.status === 'ok' ? result.sceneData : null;
 }
 
-async function llm_analyze_memory(text) {
-    console.log('[LLM] Analyzing memory...');
-    return await requestCompletion(text);
+async function llm_analyze_memory(text, options) {
+    const mode = normalizeRequestMode(options);
+    console.log(`[LLM] Analyzing memory... mode=${mode}`);
+    return await requestCompletion(text, mode);
 }
 
 function llmTest(text) {
@@ -486,9 +521,11 @@ async function runBatch(fixtures) {
     if (typeof window._kpLLM !== 'undefined') return;
 
     window.llm_analyze_memory = llm_analyze_memory;
+    window.llm_analyze_memory_detailed = requestCompletionDetailed;
 
     window._kpLLM = {
         analyze_memory: llm_analyze_memory,
+        requestDetailed: requestCompletionDetailed,
         test: llmTest,
         testBatch: runBatch,
         fixtures: window._kpLLMFixtures || [],

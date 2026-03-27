@@ -252,6 +252,66 @@
         console.log(`[PARSED] location="${result.location}" valence=${result.valence.toFixed(3)} intensity=${result.intensity.toFixed(3)} sigma=${result.sigma.toFixed(3)}`);
     }
 
+    function nextInjectToken() {
+        const token = (window._kpInjectToken || 0) + 1;
+        window._kpInjectToken = token;
+        return token;
+    }
+
+    function isActiveInjectToken(token) {
+        return window._kpInjectToken === token;
+    }
+
+    function applySceneDataToRuntime(wasm, timestamp, sceneData) {
+        window._kpSceneData = sceneData;
+
+        if (!wasm) {
+            console.log(`[SIM] skip (no wasm) location="${sceneData.location}" valence=${sceneData.emotion_valence.toFixed(3)} intensity=${sceneData.emotion_intensity.toFixed(3)}`);
+            return;
+        }
+
+        const result = writeMemoryEvent(
+            wasm,
+            null,
+            0,
+            timestamp,
+            sceneData.location,
+            sceneData.emotion_valence,
+            sceneData.emotion_intensity,
+            sceneData.sigma,
+        );
+        logParsed(result);
+    }
+
+    function annotateLlmSceneData(sceneData, source, mode, status, latencyMs) {
+        sceneData.source = source;
+        sceneData.llm_mode = mode;
+        sceneData.llm_status = status;
+        sceneData.llm_latency_ms = Math.round(latencyMs);
+        return sceneData;
+    }
+
+    async function requestDetailedScene(text, mode) {
+        if (typeof window.llm_analyze_memory_detailed === 'function') {
+            return await window.llm_analyze_memory_detailed(text, { mode });
+        }
+
+        if (typeof window.llm_analyze_memory !== 'function') {
+            return {
+                status: 'unreachable',
+                sceneData: null,
+                mode,
+            };
+        }
+
+        const sceneData = await window.llm_analyze_memory(text, { mode });
+        return {
+            status: sceneData && typeof sceneData === 'object' ? 'ok' : 'invalid_json',
+            sceneData,
+            mode,
+        };
+    }
+
     // ============================================================
     // CHANNEL 1: Free Text
     // ============================================================
@@ -260,117 +320,87 @@
 
         const timestamp = BigInt(Date.now()) * 1000000n;
         const startTime = performance.now();
+        const injectToken = nextInjectToken();
 
         const sceneData = buildSceneData(text, null);
 
-        window._kpSceneData = sceneData;
-
-        if (wasm) {
-            const result = writeMemoryEvent(
-                wasm,
-                null,
-                0,
-                timestamp,
-                sceneData.location,
-                sceneData.emotion_valence,
-                sceneData.emotion_intensity,
-                sceneData.sigma,
-            );
-            logParsed(result);
-        } else {
-            console.log(`[SIM] skip (no wasm) location="${sceneData.location}" valence=${sceneData.emotion_valence.toFixed(3)} intensity=${sceneData.emotion_intensity.toFixed(3)}`);
-        }
-
-        if (window._kpUpdatePanic) window._kpUpdatePanic();
-
-        updateScenePanel(sceneData, 'fallback', 0);
+        applySceneDataToRuntime(wasm, timestamp, sceneData);
 
         const latency = performance.now() - startTime;
-        console.log(`[LLM] status=fallback latency_ms=${Math.round(latency)} source=fallback`);
+        console.log(`[LLM] status=fallback latency_ms=${Math.round(latency)} source=fallback mode=fallback`);
 
-        if (typeof window.llm_analyze_memory !== 'function') {
+        if (typeof window.llm_analyze_memory !== 'function' && typeof window.llm_analyze_memory_detailed !== 'function') {
             return;
         }
 
-        const llmStartTime = performance.now();
-        let rawLlmScene = null;
-        let llmStatus = 'unreachable';
-        let fallbackReason = 'unreachable';
+        const fastStartTime = performance.now();
+        let fastResult;
 
         try {
-            rawLlmScene = await window.llm_analyze_memory(text);
-            if (rawLlmScene && typeof rawLlmScene === 'object') {
-                llmStatus = 'ok';
-                fallbackReason = '';
-            } else {
-                llmStatus = 'invalid_json';
-                fallbackReason = 'invalid';
-            }
+            fastResult = await requestDetailedScene(text, 'fast');
         } catch (err) {
-            if (err.name === 'AbortError') {
-                llmStatus = 'timeout';
-                fallbackReason = 'timeout';
-            } else {
-                llmStatus = 'http_error';
-                fallbackReason = 'error';
-            }
+            fastResult = {
+                status: err && err.name === 'AbortError' ? 'timeout' : 'http_error',
+                sceneData: null,
+                mode: 'fast',
+            };
         }
 
-        const llmLatency = performance.now() - llmStartTime;
+        const fastLatency = performance.now() - fastStartTime;
 
-        if (llmStatus === 'ok') {
-            const refinedSceneData = buildSceneData(text, rawLlmScene);
-            refinedSceneData.source = 'llm';
-            refinedSceneData.llm_status = llmStatus;
-            refinedSceneData.llm_latency_ms = Math.round(llmLatency);
-
-            window._kpSceneData = refinedSceneData;
-
-            if (wasm) {
-                const refinedResult = writeMemoryEvent(
-                    wasm,
-                    null,
-                    0,
-                    timestamp,
-                    refinedSceneData.location,
-                    refinedSceneData.emotion_valence,
-                    refinedSceneData.emotion_intensity,
-                    refinedSceneData.sigma,
-                );
-                logParsed(refinedResult);
-                if (window._kpUpdatePanic) window._kpUpdatePanic();
-            }
-
-            updateScenePanel(refinedSceneData, 'llm', llmLatency);
-
-            console.log(`[LLM] status=${llmStatus} latency_ms=${Math.round(llmLatency)} source=llm`);
+        if (fastResult.status === 'ok' && fastResult.sceneData && isActiveInjectToken(injectToken)) {
+            const fastSceneData = annotateLlmSceneData(
+                buildSceneData(text, fastResult.sceneData),
+                'llm_fast',
+                'fast',
+                fastResult.status,
+                fastLatency
+            );
+            applySceneDataToRuntime(wasm, timestamp, fastSceneData);
+            console.log(`[LLM] status=${fastResult.status} latency_ms=${Math.round(fastLatency)} source=llm_fast mode=fast`);
         } else {
-            sceneData.llm_status = llmStatus;
-            sceneData.llm_latency_ms = Math.round(llmLatency);
-            sceneData.fallback_reason = fallbackReason;
+            sceneData.llm_mode = 'fast';
+            sceneData.llm_status = fastResult.status;
+            sceneData.llm_latency_ms = Math.round(fastLatency);
+            sceneData.fallback_reason = fastResult.status === 'ok' ? '' : fastResult.status;
 
-            updateScenePanel(sceneData, 'fallback', llmLatency);
-
-            console.log(`[LLM] status=${llmStatus} latency_ms=${Math.round(llmLatency)} source=fallback`);
+            console.log(`[LLM] status=${fastResult.status} latency_ms=${Math.round(fastLatency)} source=fallback mode=fast`);
         }
+
+        void (async () => {
+            const deepStartTime = performance.now();
+            let deepResult;
+
+            try {
+                deepResult = await requestDetailedScene(text, 'deep');
+            } catch (err) {
+                deepResult = {
+                    status: err && err.name === 'AbortError' ? 'timeout' : 'http_error',
+                    sceneData: null,
+                    mode: 'deep',
+                };
+            }
+
+            const deepLatency = performance.now() - deepStartTime;
+
+            if (deepResult.status === 'ok' && deepResult.sceneData && isActiveInjectToken(injectToken)) {
+                const deepSceneData = annotateLlmSceneData(
+                    buildSceneData(text, deepResult.sceneData),
+                    'llm_deep',
+                    'deep',
+                    deepResult.status,
+                    deepLatency
+                );
+                applySceneDataToRuntime(wasm, timestamp, deepSceneData);
+                console.log(`[LLM] status=${deepResult.status} latency_ms=${Math.round(deepLatency)} source=llm_deep mode=deep`);
+                return;
+            }
+
+            console.log(`[LLM] status=${deepResult.status} latency_ms=${Math.round(deepLatency)} source=background_skip mode=deep`);
+        })();
     }
 
-    function updateScenePanel(sceneData, source, latencyMs) {
-        const sceneEl = document.getElementById('kp-scene-data');
-        if (!sceneEl) return;
 
-        const rows = sceneEl.querySelectorAll('.scene-row');
-        if (rows.length >= 1) rows[0].querySelector('.scene-value').textContent = source;
-        if (rows.length >= 2) rows[1].querySelector('.scene-value').textContent = sceneData.location || '-';
-        if (rows.length >= 3) rows[2].querySelector('.scene-value').textContent = sceneData.time_of_day || '-';
-        if (rows.length >= 4) rows[3].querySelector('.scene-value').textContent = sceneData.weather || '-';
-        if (rows.length >= 5) rows[4].querySelector('.scene-value').textContent = sceneData.atmosphere || '-';
-        if (rows.length >= 6) rows[5].querySelector('.scene-value').textContent = sceneData.emotion_valence?.toFixed(3) || '-';
-        if (rows.length >= 7) rows[6].querySelector('.scene-value').textContent = sceneData.emotion_intensity?.toFixed(3) || '-';
-        if (rows.length >= 8) rows[7].querySelector('.scene-value').textContent = sceneData.llm_status || '-';
-        if (rows.length >= 9) rows[8].querySelector('.scene-value').textContent = sceneData.llm_latency_ms || '-';
-        if (rows.length >= 10) rows[9].querySelector('.scene-value').textContent = sceneData.fallback_reason || '-';
-    }
 
     async function llmTest(text) {
         if (typeof window.llm_analyze_memory !== 'function') {
@@ -428,7 +458,6 @@
                     const result = writeMemoryEvent(wasm, null, 0, timestamp, location, emotion.valence, emotion.intensity, emotion.sigma);
                     console.log(`[ChatGPT ${eventIndex}]`);
                     logParsed(result);
-                    if (window._kpUpdatePanic) window._kpUpdatePanic();
                 }, eventIndex * 16);
 
                 eventIndex++;
@@ -516,7 +545,6 @@
                 const result = writeMemoryEvent(wasm, null, 0, timestamp, location, emotion.valence, emotion.intensity, emotion.sigma);
                 console.log(`[Gemini ${eventIndex}]`);
                 logParsed(result);
-                if (window._kpUpdatePanic) window._kpUpdatePanic();
             }, eventIndex * 16);
 
             eventIndex++;
