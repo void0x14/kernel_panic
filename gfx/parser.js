@@ -583,14 +583,38 @@
             submitBtn: document.getElementById('kp-audio-submit'),
             resetBtn: document.getElementById('kp-audio-reset'),
             preview: document.getElementById('kp-audio-preview'),
+            imagePreview: document.getElementById('kp-image-preview'),
+            videoPreview: document.getElementById('kp-video-preview'),
+            mediaMeta: document.getElementById('kp-media-meta'),
             status: document.getElementById('kp-audio-status'),
         };
     }
+
+    const multimodalState = {
+        mode: 'idle',
+        source_type: null,
+        file_name: '',
+        mime_type: '',
+        preview_url: '',
+        file: null,
+        metadata: {},
+        analysis: null,
+        candidate: null,
+        error: '',
+        submitted: false,
+    };
 
     function revokeAudioPreviewUrl() {
         if (audioState.preview_url) {
             URL.revokeObjectURL(audioState.preview_url);
             audioState.preview_url = '';
+        }
+    }
+
+    function revokeMultimodalPreviewUrl() {
+        if (multimodalState.preview_url) {
+            URL.revokeObjectURL(multimodalState.preview_url);
+            multimodalState.preview_url = '';
         }
     }
 
@@ -607,21 +631,22 @@
         if (!elements.status || !elements.modeSelect || !elements.textArea || !elements.injectBtn) return;
 
         const hasPreview = Boolean(audioState.blob && audioState.preview_url);
+        const hasMediaPreview = Boolean(multimodalState.file && multimodalState.preview_url);
         const inputMode = elements.modeSelect.value || 'auto';
         const textVisible = inputMode === 'auto' || inputMode === 'text';
-        const audioVisible = inputMode === 'auto' || inputMode === 'audio_file' || inputMode === 'live_audio';
+        const mediaVisible = inputMode === 'auto' || inputMode === 'audio_file' || inputMode === 'live_audio' || inputMode === 'image' || inputMode === 'video';
         const recordVisible = inputMode === 'auto' || inputMode === 'live_audio';
 
         elements.textArea.hidden = !textVisible;
         elements.injectBtn.hidden = !textVisible;
-        elements.recordBtn.hidden = !audioVisible;
-        elements.stopBtn.hidden = !audioVisible;
-        elements.submitBtn.hidden = !audioVisible;
-        elements.resetBtn.hidden = !audioVisible;
+        elements.recordBtn.hidden = !recordVisible;
+        elements.stopBtn.hidden = !recordVisible;
+        elements.submitBtn.hidden = !mediaVisible;
+        elements.resetBtn.hidden = !mediaVisible;
         elements.recordBtn.disabled = !recordVisible || audioState.mode === 'recording';
         elements.stopBtn.disabled = audioState.mode !== 'recording';
-        elements.submitBtn.disabled = !hasPreview || audioState.mode === 'recording';
-        elements.resetBtn.disabled = audioState.mode === 'idle' && !hasPreview && !audioState.error;
+        elements.submitBtn.disabled = (!hasPreview && !hasMediaPreview) || audioState.mode === 'recording';
+        elements.resetBtn.disabled = audioState.mode === 'idle' && !hasPreview && !hasMediaPreview && !audioState.error && !multimodalState.error;
 
         if (elements.dropzone) {
             if (inputMode === 'text') {
@@ -630,17 +655,21 @@
                 elements.dropzone.textContent = 'Audio file mode. Drop/select an audio file, review playback, then submit manually.';
             } else if (inputMode === 'live_audio') {
                 elements.dropzone.textContent = 'Live audio mode. Start recording, stop to preview, then submit manually.';
+            } else if (inputMode === 'image') {
+                elements.dropzone.textContent = 'Image mode. Drop/select an image file to preview it and stage multimodal analysis.';
+            } else if (inputMode === 'video') {
+                elements.dropzone.textContent = 'Video mode. Drop/select a video file to preview it and stage multimodal analysis.';
             } else if (inputMode === 'chatgpt_json') {
                 elements.dropzone.textContent = 'ChatGPT JSON mode. Drop/select a ChatGPT export file to import it.';
             } else if (inputMode === 'gemini_json') {
                 elements.dropzone.textContent = 'Gemini JSON mode. Drop/select a Gemini export file to import it.';
             } else {
-                elements.dropzone.textContent = 'Auto mode detects audio and JSON imports. Image/video slots will attach here next.';
+                elements.dropzone.textContent = 'Auto mode detects audio, image, video, and JSON imports.';
             }
         }
 
         if (elements.preview) {
-            if (hasPreview && audioVisible) {
+            if (hasPreview && mediaVisible) {
                 elements.preview.hidden = false;
                 elements.preview.src = audioState.preview_url;
             } else {
@@ -650,15 +679,48 @@
             }
         }
 
+        if (elements.imagePreview) {
+            if (hasMediaPreview && multimodalState.source_type === 'image' && mediaVisible) {
+                elements.imagePreview.hidden = false;
+                elements.imagePreview.src = multimodalState.preview_url;
+            } else {
+                elements.imagePreview.hidden = true;
+                elements.imagePreview.removeAttribute('src');
+            }
+        }
+
+        if (elements.videoPreview) {
+            if (hasMediaPreview && multimodalState.source_type === 'video' && mediaVisible) {
+                elements.videoPreview.hidden = false;
+                elements.videoPreview.src = multimodalState.preview_url;
+            } else {
+                elements.videoPreview.hidden = true;
+                elements.videoPreview.removeAttribute('src');
+                elements.videoPreview.load();
+            }
+        }
+
+        if (elements.mediaMeta) {
+            elements.mediaMeta.textContent = (multimodalState.mode === 'preview_ready' || multimodalState.mode === 'submitted')
+                ? JSON.stringify(multimodalState.metadata)
+                : '';
+        }
+
         let statusText = 'Idle. Load a file or record audio, preview it, then submit manually.';
         if (audioState.error) {
             statusText = `Error: ${audioState.error}`;
+        } else if (multimodalState.error) {
+            statusText = `Error: ${multimodalState.error}`;
         } else if (audioState.mode === 'recording') {
             statusText = 'Recording live audio. Stop recording to create a preview.';
         } else if (audioState.mode === 'preview_ready') {
             statusText = `Preview ready (${audioState.source_type === 'live_audio' ? 'live recording' : 'audio file'}). Review playback, then submit manually.`;
         } else if (audioState.mode === 'submitted') {
             statusText = `Submitted ${audioState.source_type === 'live_audio' ? 'live recording' : 'audio file'} for later processing.`;
+        } else if (multimodalState.mode === 'preview_ready') {
+            statusText = `Preview ready (${multimodalState.source_type}). Metadata loaded when available; submit manually to stage multimodal analysis.`;
+        } else if (multimodalState.mode === 'submitted') {
+            statusText = `Submitted ${multimodalState.source_type} for multimodal analysis staging.`;
         }
 
         elements.status.textContent = statusText;
@@ -679,6 +741,7 @@
 
     function resetAudioState() {
         revokeAudioPreviewUrl();
+        revokeMultimodalPreviewUrl();
         stopAudioStreamTracks();
         audioState.mode = 'idle';
         audioState.source_type = null;
@@ -689,6 +752,16 @@
         audioState.chunks = [];
         audioState.error = '';
         audioState.submitted = false;
+        multimodalState.mode = 'idle';
+        multimodalState.source_type = null;
+        multimodalState.file_name = '';
+        multimodalState.mime_type = '';
+        multimodalState.file = null;
+        multimodalState.metadata = {};
+        multimodalState.analysis = null;
+        multimodalState.candidate = null;
+        multimodalState.error = '';
+        multimodalState.submitted = false;
 
         const elements = getAudioElements();
         if (elements.fileInput) {
@@ -707,9 +780,141 @@
         syncAudioUi();
     }
 
+    function failMultimodalState(message) {
+        multimodalState.mode = 'idle';
+        multimodalState.error = message;
+        syncAudioUi();
+    }
+
     function handleAudioFile(file) {
         if (!file) return;
         setAudioPreview(file, 'audio_file', file.name || 'audio-file');
+    }
+
+    function buildCanonicalCandidate(sourceType, metadata, analysis) {
+        return {
+            source_type: sourceType,
+            raw_inputs: {
+                text: null,
+                transcript: null,
+                image_descriptions: sourceType === 'image' ? [analysis.summary] : [],
+                video_segments: sourceType === 'video' ? analysis.video_segments : [],
+                metadata,
+            },
+            memory_candidate: {
+                location_hints: [],
+                time_hints: [],
+                person_hints: [],
+                emotion_hints: [],
+                event_hints: [],
+                confidence: 0.1,
+            },
+        };
+    }
+
+    function setMultimodalPreview(file, sourceType, metadata, analysis) {
+        revokeMultimodalPreviewUrl();
+        multimodalState.mode = 'preview_ready';
+        multimodalState.source_type = sourceType;
+        multimodalState.file_name = file.name || `${sourceType}-file`;
+        multimodalState.mime_type = file.type || '';
+        multimodalState.file = file;
+        multimodalState.preview_url = URL.createObjectURL(file);
+        multimodalState.metadata = metadata;
+        multimodalState.analysis = analysis;
+        multimodalState.candidate = buildCanonicalCandidate(sourceType, metadata, analysis);
+        multimodalState.error = '';
+        multimodalState.submitted = false;
+        syncAudioUi();
+    }
+
+    async function loadImageMetadata(file) {
+        return await new Promise((resolve) => {
+            const image = new Image();
+            const objectUrl = URL.createObjectURL(file);
+            image.onload = () => {
+                const metadata = {
+                    file_name: file.name,
+                    mime_type: file.type || '',
+                    size_bytes: file.size,
+                    last_modified_ms: file.lastModified || 0,
+                    width: image.naturalWidth || null,
+                    height: image.naturalHeight || null,
+                };
+                URL.revokeObjectURL(objectUrl);
+                resolve(metadata);
+            };
+            image.onerror = () => {
+                URL.revokeObjectURL(objectUrl);
+                resolve({
+                    file_name: file.name,
+                    mime_type: file.type || '',
+                    size_bytes: file.size,
+                    last_modified_ms: file.lastModified || 0,
+                });
+            };
+            image.src = objectUrl;
+        });
+    }
+
+    async function loadVideoMetadata(file) {
+        return await new Promise((resolve) => {
+            const video = document.createElement('video');
+            const objectUrl = URL.createObjectURL(file);
+            const finalize = (metadata) => {
+                URL.revokeObjectURL(objectUrl);
+                resolve(metadata);
+            };
+
+            video.preload = 'metadata';
+            video.onloadedmetadata = () => {
+                finalize({
+                    file_name: file.name,
+                    mime_type: file.type || '',
+                    size_bytes: file.size,
+                    last_modified_ms: file.lastModified || 0,
+                    duration_s: Number.isFinite(video.duration) ? video.duration : null,
+                    width: video.videoWidth || null,
+                    height: video.videoHeight || null,
+                });
+            };
+            video.onerror = () => {
+                finalize({
+                    file_name: file.name,
+                    mime_type: file.type || '',
+                    size_bytes: file.size,
+                    last_modified_ms: file.lastModified || 0,
+                });
+            };
+            video.src = objectUrl;
+        });
+    }
+
+    async function handleImageFile(file) {
+        const metadata = await loadImageMetadata(file);
+        setMultimodalPreview(file, 'image', metadata, {
+            summary: 'Static image uploaded; multimodal analysis pending.',
+            person_object_anchors: [],
+            spatial_relation_hints: [],
+            emotion_hints: [],
+            uncertainty_flags: ['no multimodal image model attached yet'],
+        });
+    }
+
+    async function handleVideoFile(file) {
+        const metadata = await loadVideoMetadata(file);
+        setMultimodalPreview(file, 'video', metadata, {
+            summary: 'Video uploaded; multimodal temporal analysis pending.',
+            video_segments: [
+                {
+                    index: 0,
+                    summary: 'Full video pending frame sampling and motion segmentation.',
+                },
+            ],
+            motion_event_hints: [],
+            audio_transcript: null,
+            uncertainty_flags: ['no multimodal video model attached yet'],
+        });
     }
 
     async function startAudioRecording() {
@@ -766,26 +971,51 @@
     }
 
     function submitAudioPreview() {
-        if (!audioState.blob) return null;
+        if (audioState.blob) {
+            const submission = {
+                source_type: audioState.source_type,
+                file_name: audioState.file_name,
+                mime_type: audioState.mime_type,
+                size_bytes: audioState.blob.size,
+                submitted_at_ms: Date.now(),
+                blob: audioState.blob,
+            };
+
+            window._kpAudioLastSubmission = submission;
+            audioState.mode = 'submitted';
+            audioState.error = '';
+            audioState.submitted = true;
+            syncAudioUi();
+            console.log('[AUDIO] Preview submitted for later processing', {
+                source_type: submission.source_type,
+                file_name: submission.file_name,
+                size_bytes: submission.size_bytes,
+            });
+            return submission;
+        }
+
+        if (!multimodalState.file) return null;
 
         const submission = {
-            source_type: audioState.source_type,
-            file_name: audioState.file_name,
-            mime_type: audioState.mime_type,
-            size_bytes: audioState.blob.size,
+            source_type: multimodalState.source_type,
+            file_name: multimodalState.file_name,
+            mime_type: multimodalState.mime_type,
+            size_bytes: multimodalState.file.size,
             submitted_at_ms: Date.now(),
-            blob: audioState.blob,
+            metadata: multimodalState.metadata,
+            analysis: multimodalState.analysis,
+            candidate: multimodalState.candidate,
+            file: multimodalState.file,
         };
 
-        window._kpAudioLastSubmission = submission;
-        audioState.mode = 'submitted';
-        audioState.error = '';
-        audioState.submitted = true;
+        window._kpMultimodalLastSubmission = submission;
+        multimodalState.mode = 'submitted';
+        multimodalState.error = '';
+        multimodalState.submitted = true;
         syncAudioUi();
-        console.log('[AUDIO] Preview submitted for later processing', {
+        console.log('[MULTIMODAL] Preview submitted for later processing', {
             source_type: submission.source_type,
             file_name: submission.file_name,
-            size_bytes: submission.size_bytes,
         });
         return submission;
     }
@@ -809,6 +1039,14 @@
 
     function isAudioFile(file) {
         return Boolean(file && typeof file.type === 'string' && file.type.startsWith('audio/'));
+    }
+
+    function isImageFile(file) {
+        return Boolean(file && typeof file.type === 'string' && file.type.startsWith('image/'));
+    }
+
+    function isVideoFile(file) {
+        return Boolean(file && typeof file.type === 'string' && file.type.startsWith('video/'));
     }
 
     function isJsonFile(file) {
@@ -854,6 +1092,16 @@
             return;
         }
 
+        if (selectedMode === 'image' || (selectedMode === 'auto' && isImageFile(file))) {
+            await handleImageFile(file);
+            return;
+        }
+
+        if (selectedMode === 'video' || (selectedMode === 'auto' && isVideoFile(file))) {
+            await handleVideoFile(file);
+            return;
+        }
+
         if (selectedMode === 'chatgpt_json' || selectedMode === 'gemini_json' || (selectedMode === 'auto' && isJsonFile(file))) {
             const jsonStr = await readFileAsText(file);
             const importKind = selectedMode === 'auto' ? inferJsonImportKind(jsonStr, file.name) : selectedMode;
@@ -865,16 +1113,16 @@
                 parseGemini(jsonStr);
                 return;
             }
-            failAudioState('JSON import type could not be detected.');
+            failMultimodalState('JSON import type could not be detected.');
             return;
         }
 
         if (selectedMode === 'auto') {
-            failAudioState('Unsupported file type for auto mode.');
+            failMultimodalState('Unsupported file type for auto mode.');
             return;
         }
 
-        failAudioState(`Selected mode ${selectedMode} is not ready for this file yet.`);
+        failMultimodalState(`Selected mode ${selectedMode} is not ready for this file yet.`);
     }
 
     function setDropzoneActive(isActive) {
@@ -991,6 +1239,18 @@
             stopRecording: stopAudioRecording,
             submitPreview: submitAudioPreview,
             reset: resetAudioState,
+        },
+        multimodalInput: {
+            getState: () => ({
+                mode: multimodalState.mode,
+                source_type: multimodalState.source_type,
+                file_name: multimodalState.file_name,
+                mime_type: multimodalState.mime_type,
+                metadata: multimodalState.metadata,
+                has_preview: Boolean(multimodalState.file && multimodalState.preview_url),
+                submitted: multimodalState.submitted,
+                error: multimodalState.error,
+            }),
         },
     };
 

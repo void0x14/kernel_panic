@@ -270,13 +270,15 @@
                 <option value="text">TEXT</option>
                 <option value="audio_file">AUDIO FILE</option>
                 <option value="live_audio">LIVE AUDIO</option>
+                <option value="image">IMAGE</option>
+                <option value="video">VIDEO</option>
                 <option value="chatgpt_json">CHATGPT JSON</option>
                 <option value="gemini_json">GEMINI JSON</option>
             </select>
             <label class="file-btn" for="kp-unified-file">ADD FILE</label>
             <input id="kp-unified-file" class="file-input-hidden" type="file" accept="audio/*,image/*,video/*,.json">
         </div>
-        <div id="kp-dropzone">Drop a file here or choose one. Auto mode detects audio and JSON imports; image/video slots will attach here next.</div>
+        <div id="kp-dropzone">Drop a file here or choose one. Auto mode detects audio, image, video, and JSON imports.</div>
         <textarea id="kp-memory-text" placeholder="Anını yaz... (örn: 2019 yaz Istanbul arkadaşımla tartıştım çok sinirliydim)"></textarea>
         <button id="kp-inject">INJECT</button>
         <div class="inject-hint">Ctrl+Enter to inject</div>
@@ -287,6 +289,9 @@
             <button id="kp-audio-reset" class="audio-btn" disabled>RESET</button>
         </div>
         <audio id="kp-audio-preview" controls hidden></audio>
+        <img id="kp-image-preview" hidden alt="Image preview" style="width:100%; margin-top:8px; object-fit:contain; max-height:220px; border:1px solid rgba(200,200,200,0.12);">
+        <video id="kp-video-preview" controls hidden style="width:100%; margin-top:8px; max-height:220px; border:1px solid rgba(200,200,200,0.12);"></video>
+        <div id="kp-media-meta" class="audio-status"></div>
         <div id="kp-audio-status" class="audio-status">Idle. Load a file or record audio, preview it, then submit manually.</div>
     </div>
 
